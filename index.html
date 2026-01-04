@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioRadar - Landmark Edition</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f0f4f8; color: #1a202c; }
+        h1 { text-align: center; color: #2c5282; }
+        button { 
+            width: 100%; padding: 20px; font-size: 1.2rem; margin-bottom: 10px;
+            background-color: #2b6cb0; color: white; border: none; border-radius: 8px; cursor: pointer;
+        }
+        .track-btn { width: auto; padding: 10px 20px; background-color: #28a745; font-size: 1rem; margin-top: 10px; }
+        .stop-btn { background-color: #dc3545; }
+        #status-area { 
+            margin: 20px 0; padding: 15px; border: 3px solid #2b6cb0; 
+            background-color: #ebf8ff; font-weight: bold; font-size: 1.1rem;
+        }
+        .flight-item { 
+            background: #fff; padding: 15px; margin-bottom: 15px; 
+            border: 2px solid #cbd5e0; border-radius: 8px; list-style: none;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>AudioRadar ✈️</h1>
+    
+    <button id="scan-button">Scan Sky for Nearby Aircraft</button>
+    <button id="stop-track" class="hidden stop-btn">Stop Tracking & Return to List</button>
+
+    <div id="status-area" role="status" aria-live="polite">
+        Status: Ready.
+    </div>
+
+    <ul id="results-list" aria-label="Flight List"></ul>
+
+    <script>
+        // --- CONFIGURATION ---
+        const LOCATION_IQ_KEY = 'pk.9681eee140edd277b8fd653def13e108'; // <--- PASTE YOUR KEY HERE
+        
+        const scanButton = document.getElementById('scan-button');
+        const stopTrackBtn = document.getElementById('stop-track');
+        const statusArea = document.getElementById('status-area');
+        const resultsList = document.getElementById('results-list');
+
+        let trackingInterval = null;
+        let trackedIcao = null;
+        let lastLandmark = "";
+
+        // Math for distance and direction
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 3958.8;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        function getDirection(lat1, lon1, lat2, lon2) {
+            const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
+            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
+            let bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+            const dirs = ['North', 'North East', 'East', 'South East', 'South', 'South West', 'West', 'North West'];
+            return dirs[Math.round(bearing / 45) % 8];
+        }
+
+        async function getLandmark(lat, lon) {
+            try {
+                const url = `https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                // LocationIQ returns an address object. We want to find the most "landmarky" name.
+                const addr = data.address;
+                const landmark = addr.neighbourhood || addr.suburb || addr.commercial || addr.road || addr.city || "Unknown area";
+                return landmark;
+            } catch (e) {
+                return "";
+            }
+        }
+
+        function startTracking(icao, callsign) {
+            trackedIcao = icao;
+            lastLandmark = "";
+            scanButton.classList.add('hidden');
+            stopTrackBtn.classList.remove('hidden');
+            statusArea.innerText = `Status: Locking onto Flight ${callsign}...`;
+            performTrackUpdate();
+            trackingInterval = setInterval(performTrackUpdate, 10000);
+        }
+
+        function stopTracking() {
+            clearInterval(trackingInterval);
+            trackedIcao = null;
+            stopTrackBtn.classList.add('hidden');
+            scanButton.classList.remove('hidden');
+            handleScan();
+        }
+
+        async function performTrackUpdate() {
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const myLat = pos.coords.latitude;
+                const myLon = pos.coords.longitude;
+                
+                const response = await fetch(`https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`);
+                const data = await response.json();
+                const plane = data.states.find(p => p[0] === trackedIcao);
+                
+                if (plane) {
+                    const callsign = plane[1].trim() || "Unknown";
+                    const pLat = plane[6];
+                    const pLon = plane[5];
+                    const dist = calculateDistance(myLat, myLon, pLat, pLon).toFixed(1);
+                    const dir = getDirection(myLat, myLon, pLat, pLon);
+                    const alt = Math.round(plane[7] * 3.28084);
+                    
+                    // Fetch landmark
+                    const currentLandmark = await getLandmark(pLat, pLon);
+                    let landmarkMsg = currentLandmark ? ` over ${currentLandmark}` : "";
+
+                    const updateMsg = `Flight ${callsign}: ${dist} miles ${dir}${landmarkMsg}, altitude ${alt} feet.`;
+                    statusArea.innerText = updateMsg;
+                    resultsList.innerHTML = `<li class="flight-item">${updateMsg}</li>`;
+                } else {
+                    statusArea.innerText = "Status: Lost contact.";
+                    stopTracking();
+                }
+            });
+        }
+
+        async function handleScan() {
+            statusArea.innerText = "Status: Scanning...";
+            resultsList.innerHTML = "";
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const myLat = pos.coords.latitude;
+                const myLon = pos.coords.longitude;
+                const url = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (!data.states) { statusArea.innerText = "No planes found."; return; }
+                
+                const planes = data.states.map(p => ({
+                    icao: p[0],
+                    callsign: p[1].trim() || "Unknown",
+                    dist: calculateDistance(myLat, myLon, p[6], p[5]),
+                    dir: getDirection(myLat, myLon, p[6], p[5]),
+                    alt: p[7] ? Math.round(p[7] * 3.28084) : 0
+                })).sort((a, b) => a.dist - b.dist);
+
+                planes.slice(0, 10).forEach(p => {
+                    const li = document.createElement('li');
+                    li.className = 'flight-item';
+                    li.innerHTML = `
+                        <strong>Flight ${p.callsign}</strong><br>
+                        ${p.dist.toFixed(1)} miles ${p.dir}, ${p.alt} feet.<br>
+                        <button class="track-btn" onclick="startTracking('${p.icao}', '${p.callsign}')">Track This Flight</button>
+                    `;
+                    resultsList.appendChild(li);
+                });
+                statusArea.innerText = `Found ${planes.length} planes.`;
+            });
+        }
+
+        scanButton.addEventListener('click', handleScan);
+        stopTrackBtn.addEventListener('click', stopTracking);
+    </script>
+</body>
+</html>
