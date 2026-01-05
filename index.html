@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AudioRadar - Accessible Landmark Edition</title>
+    <title>AudioRadar - Map Edition</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
     <style>
         /* High-Contrast Dark Mode */
         body { 
@@ -14,82 +17,39 @@
             line-height: 1.5;
         }
 
-        h1 { 
-            text-align: center; 
-            color: #BB86FC; 
-            border-bottom: 2px solid #333;
-            padding-bottom: 10px;
-        }
+        h1 { text-align: center; color: #BB86FC; border-bottom: 2px solid #333; padding-bottom: 10px; }
 
-        /* Large Accessible Buttons */
         button { 
-            width: 100%; 
-            padding: 20px; 
-            font-size: 1.3rem; 
-            margin-bottom: 12px;
-            background-color: #1F1F1F; 
-            color: #FFFFFF; 
-            border: 2px solid #BB86FC; 
-            border-radius: 8px; 
-            cursor: pointer;
-            font-weight: bold;
+            width: 100%; padding: 20px; font-size: 1.3rem; margin-bottom: 12px;
+            background-color: #1F1F1F; color: #FFFFFF; border: 2px solid #BB86FC; 
+            border-radius: 8px; cursor: pointer; font-weight: bold;
         }
 
-        button:hover, button:focus {
-            background-color: #BB86FC;
-            color: #000000;
-            outline: 3px solid #FFFFFF;
-        }
+        button:hover, button:focus { background-color: #BB86FC; color: #000; outline: 3px solid #FFF; }
 
-        .track-btn { 
-            width: auto; 
-            padding: 12px 24px; 
-            background-color: #03DAC6; 
-            color: #000; 
-            border: none;
-            margin-top: 10px;
-        }
+        .track-btn { width: auto; padding: 12px 24px; background-color: #03DAC6; color: #000; border: none; margin-top: 10px; }
+        .stop-btn { background-color: #CF6679; border-color: #FFB4B4; color: #000; }
 
-        .stop-btn { 
-            background-color: #CF6679; 
-            border-color: #FFB4B4;
-            color: #000;
-        }
-
-        /* Status Area with high-visibility teal border */
         #status-area { 
-            margin: 20px 0; 
-            padding: 20px; 
-            border: 3px solid #03DAC6; 
-            background-color: #1A1A1A; 
-            font-weight: bold; 
-            font-size: 1.2rem;
-            color: #03DAC6;
-            border-radius: 12px;
+            margin: 20px 0; padding: 20px; border: 3px solid #03DAC6; 
+            background-color: #1A1A1A; font-weight: bold; font-size: 1.2rem;
+            color: #03DAC6; border-radius: 12px;
         }
 
-        .flight-item { 
-            background: #1E1E1E; 
-            padding: 20px; 
-            margin-bottom: 15px; 
-            border: 2px solid #333; 
-            border-radius: 8px; 
-            list-style: none;
-        }
-
+        .flight-item { background: #1E1E1E; padding: 20px; margin-bottom: 15px; border: 2px solid #333; border-radius: 8px; list-style: none; }
         .hidden { display: none; }
         
-        /* Helper for screen reader headings */
-        .sr-only {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            border: 0;
+        /* Map Styling - Stays at bottom */
+        #map { 
+            height: 300px; 
+            width: 100%; 
+            margin-top: 20px; 
+            border: 2px solid #333; 
+            border-radius: 8px;
+            z-index: 1; /* Ensures buttons appear over map if needed */
         }
+
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
     </style>
 </head>
 <body>
@@ -106,12 +66,15 @@
             Status: Ready.
         </div>
 
-        <h2 class="sr-only">Flight Results</h2>
         <ul id="results-list" aria-label="Flight List"></ul>
+
+        <h2 class="sr-only">Visual Map of Aircraft</h2>
+        <div id="map" aria-hidden="true"></div>
     </main>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
     <script>
-        // --- CONFIGURATION ---
         const LOCATION_IQ_KEY = 'pk.9681eee140edd277b8fd653def13e108'; 
         
         const scanButton = document.getElementById('scan-button');
@@ -121,9 +84,14 @@
 
         let trackingInterval = null;
         let trackedIcao = null;
-        let lastLandmark = "";
+        
+        // Map Variables
+        let map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        let marker = L.marker([0, 0]).addTo(map);
 
-        // Math for distance and direction
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
             const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -145,22 +113,16 @@
                 const url = `https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json`;
                 const response = await fetch(url);
                 const data = await response.json();
-                
                 const addr = data.address;
-                // Kept your original landmark logic to ensure street names are announced
-                const landmark = addr.neighbourhood || addr.suburb || addr.commercial || addr.road || addr.city || "Unknown area";
-                return landmark;
-            } catch (e) {
-                return "";
-            }
+                return addr.neighbourhood || addr.suburb || addr.commercial || addr.road || addr.city || "Unknown area";
+            } catch (e) { return ""; }
         }
 
-        // Global function for the buttons
         window.startTracking = function(icao, callsign) {
             trackedIcao = icao;
-            lastLandmark = "";
             scanButton.classList.add('hidden');
             stopTrackBtn.classList.remove('hidden');
+            resultsList.innerHTML = ""; 
             statusArea.innerText = `Status: Locking onto Flight ${callsign}...`;
             performTrackUpdate();
             trackingInterval = setInterval(performTrackUpdate, 10000);
@@ -192,6 +154,11 @@
                         const dir = getDirection(myLat, myLon, pLat, pLon);
                         const alt = plane[7] ? Math.round(plane[7] * 3.28084) : "unknown";
                         
+                        // Update Map
+                        const planePos = [pLat, pLon];
+                        map.setView(planePos, 13);
+                        marker.setLatLng(planePos).bindPopup(`Flight ${callsign}`).openPopup();
+
                         const currentLandmark = await getLandmark(pLat, pLon);
                         let landmarkMsg = currentLandmark ? ` over ${currentLandmark}` : "";
 
@@ -202,9 +169,7 @@
                         statusArea.innerText = "Status: Lost contact.";
                         stopTracking();
                     }
-                } catch (err) {
-                    statusArea.innerText = "Status: Update error. Retrying...";
-                }
+                } catch (err) { statusArea.innerText = "Status: Update error."; }
             });
         }
 
@@ -214,12 +179,12 @@
             navigator.geolocation.getCurrentPosition(async (pos) => {
                 const myLat = pos.coords.latitude;
                 const myLon = pos.coords.longitude;
+                map.setView([myLat, myLon], 10); // Center map on user during scan
                 
                 try {
                     const url = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
                     const response = await fetch(url);
                     const data = await response.json();
-                    
                     if (!data.states) { statusArea.innerText = "No planes found."; return; }
                     
                     const planes = data.states.map(p => ({
@@ -235,15 +200,13 @@
                         li.className = 'flight-item';
                         li.innerHTML = `
                             <strong>Flight ${p.callsign}</strong><br>
-                            ${p.dist.toFixed(1)} miles ${p.dir}, ${p.alt} feet altitude.<br>
+                            ${p.dist.toFixed(1)} miles ${p.dir}, ${p.alt} feet.<br>
                             <button class="track-btn" onclick="startTracking('${p.icao}', '${p.callsign}')">Track ${p.callsign}</button>
                         `;
                         resultsList.appendChild(li);
                     });
                     statusArea.innerText = `Status: Found ${planes.length} planes. Showing nearest 10.`;
-                } catch (err) {
-                    statusArea.innerText = "Status: Scan failed. Check connection.";
-                }
+                } catch (err) { statusArea.innerText = "Status: Scan failed."; }
             });
         }
 
