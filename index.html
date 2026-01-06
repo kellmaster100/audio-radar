@@ -11,7 +11,8 @@
         /* High-Contrast Dark Mode */
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            margin: 20px; 
+            margin: 0; /* Changed to 0 for better map edge-to-edge on mobile */
+            padding: 20px;
             background-color: #121212; 
             color: #E0E0E0; 
             line-height: 1.5;
@@ -37,19 +38,16 @@
         }
 
         .flight-item { background: #1E1E1E; padding: 20px; margin-bottom: 15px; border: 2px solid #333; border-radius: 8px; list-style: none; }
-        .hidden { display: none; }
         
-        /* Map Styling - Stays at bottom */
+        /* Map Container */
         #map { 
-            height: 300px; 
+            height: 350px; 
             width: 100%; 
             margin-top: 20px; 
             border: 2px solid #333; 
             border-radius: 8px;
-            z-index: 1; /* Ensures buttons appear over map if needed */
+            background-color: #1a1a1a; /* Placeholder color before tiles load */
         }
-
-        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
     </style>
 </head>
 <body>
@@ -60,7 +58,7 @@
     
     <main>
         <button id="scan-button">Scan Sky for Nearby Aircraft</button>
-        <button id="stop-track" class="hidden stop-btn">Stop Tracking & Return to List</button>
+        <button id="stop-track" class="hidden" style="display:none;">Stop Tracking & Return to List</button>
 
         <div id="status-area" role="status" aria-live="assertive">
             Status: Ready.
@@ -68,7 +66,7 @@
 
         <ul id="results-list" aria-label="Flight List"></ul>
 
-        <h2 class="sr-only">Visual Map of Aircraft</h2>
+        <h2>Visual Map of Aircraft</h2>
         <div id="map" aria-hidden="true"></div>
     </main>
 
@@ -85,12 +83,20 @@
         let trackingInterval = null;
         let trackedIcao = null;
         
-        // Map Variables
-        let map = L.map('map').setView([0, 0], 2);
+        // Map Setup
+        let map = L.map('map', {
+            zoomControl: false, // Hides UI from screen reader
+            keyboard: false     // Prevents keyboard focus inside map
+        }).setView([34.0522, -118.2437], 10); // Default to a generic area
+
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '© OpenStreetMap'
         }).addTo(map);
+
         let marker = L.marker([0, 0]).addTo(map);
+
+        // THE FIX: Force the map to refresh its size after the page loads
+        setTimeout(() => { map.invalidateSize(); }, 800);
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
@@ -120,8 +126,8 @@
 
         window.startTracking = function(icao, callsign) {
             trackedIcao = icao;
-            scanButton.classList.add('hidden');
-            stopTrackBtn.classList.remove('hidden');
+            scanButton.style.display = 'none';
+            stopTrackBtn.style.display = 'block';
             resultsList.innerHTML = ""; 
             statusArea.innerText = `Status: Locking onto Flight ${callsign}...`;
             performTrackUpdate();
@@ -131,8 +137,8 @@
         function stopTracking() {
             clearInterval(trackingInterval);
             trackedIcao = null;
-            stopTrackBtn.classList.add('hidden');
-            scanButton.classList.remove('hidden');
+            stopTrackBtn.style.display = 'none';
+            scanButton.style.display = 'block';
             handleScan();
         }
 
@@ -147,17 +153,18 @@
                     const plane = data.states ? data.states.find(p => p[0] === trackedIcao) : null;
                     
                     if (plane) {
-                        const callsign = plane[1].trim() || "Unknown";
+                        const callsign = (plane[1] || "UNK").trim();
                         const pLat = plane[6];
                         const pLon = plane[5];
                         const dist = calculateDistance(myLat, myLon, pLat, pLon).toFixed(1);
                         const dir = getDirection(myLat, myLon, pLat, pLon);
                         const alt = plane[7] ? Math.round(plane[7] * 3.28084) : "unknown";
                         
-                        // Update Map
+                        // Update Map Position
                         const planePos = [pLat, pLon];
                         map.setView(planePos, 13);
                         marker.setLatLng(planePos).bindPopup(`Flight ${callsign}`).openPopup();
+                        map.invalidateSize(); // Keep visual tiles loading during movement
 
                         const currentLandmark = await getLandmark(pLat, pLon);
                         let landmarkMsg = currentLandmark ? ` over ${currentLandmark}` : "";
@@ -166,7 +173,7 @@
                         statusArea.innerText = updateMsg;
                         resultsList.innerHTML = `<li class="flight-item">${updateMsg}</li>`;
                     } else {
-                        statusArea.innerText = "Status: Lost contact.";
+                        statusArea.innerText = "Status: Lost contact with aircraft.";
                         stopTracking();
                     }
                 } catch (err) { statusArea.innerText = "Status: Update error."; }
@@ -179,7 +186,8 @@
             navigator.geolocation.getCurrentPosition(async (pos) => {
                 const myLat = pos.coords.latitude;
                 const myLon = pos.coords.longitude;
-                map.setView([myLat, myLon], 10); // Center map on user during scan
+                map.setView([myLat, myLon], 10);
+                map.invalidateSize();
                 
                 try {
                     const url = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
@@ -189,7 +197,7 @@
                     
                     const planes = data.states.map(p => ({
                         icao: p[0],
-                        callsign: p[1].trim() || "Unknown",
+                        callsign: (p[1] || "UNK").trim(),
                         dist: calculateDistance(myLat, myLon, p[6], p[5]),
                         dir: getDirection(myLat, myLon, p[6], p[5]),
                         alt: p[7] ? Math.round(p[7] * 3.28084) : 0
