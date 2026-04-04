@@ -4,103 +4,59 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AudioRadar - Map Edition</title>
-    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        /* High-Contrast Dark Mode */
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            margin: 0; 
-            padding: 20px;
-            background-color: #121212; 
-            color: #E0E0E0; 
-            line-height: 1.5;
+            margin: 0; padding: 20px; background-color: #121212; color: #E0E0E0; line-height: 1.5;
         }
-
         h1 { text-align: center; color: #BB86FC; border-bottom: 2px solid #333; padding-bottom: 10px; }
-
         button { 
             width: 100%; padding: 20px; font-size: 1.3rem; margin-bottom: 12px;
             background-color: #1F1F1F; color: #FFFFFF; border: 2px solid #BB86FC; 
             border-radius: 8px; cursor: pointer; font-weight: bold;
         }
-
         button:hover, button:focus { background-color: #BB86FC; color: #000; outline: 3px solid #FFF; }
-
         .track-btn { width: auto; padding: 12px 24px; background-color: #03DAC6; color: #000; border: none; margin-top: 10px; }
         .stop-btn { background-color: #CF6679; border-color: #FFB4B4; color: #000; }
-
         #status-area { 
             margin: 20px 0; padding: 20px; border: 3px solid #03DAC6; 
             background-color: #1A1A1A; font-weight: bold; font-size: 1.2rem;
             color: #03DAC6; border-radius: 12px;
         }
-
         .flight-item { background: #1E1E1E; padding: 20px; margin-bottom: 15px; border: 2px solid #333; border-radius: 8px; list-style: none; }
-        
-        /* Map Container */
-        #map { 
-            height: 350px; 
-            width: 100%; 
-            margin-top: 20px; 
-            border: 2px solid #333; 
-            border-radius: 8px;
-            background-color: #1a1a1a; 
-        }
+        #map { height: 350px; width: 100%; margin-top: 20px; border: 2px solid #333; border-radius: 8px; background-color: #1a1a1a; }
     </style>
 </head>
 <body>
-
-    <header>
-        <h1>AudioRadar ✈️</h1>
-    </header>
-    
+    <header><h1>AudioRadar ✈️</h1></header>
     <main>
         <button id="scan-button">Scan Sky for Nearby Aircraft</button>
-        <button id="stop-track" class="hidden" style="display:none;">Stop Tracking & Return to List</button>
-
-        <div id="status-area" role="status" aria-live="assertive">
-            Status: Ready.
-        </div>
-
+        <button id="stop-track" style="display:none;">Stop Tracking & Return to List</button>
+        <div id="status-area" role="status" aria-live="assertive">Status: Ready.</div>
         <ul id="results-list" aria-label="Flight List"></ul>
-
         <h2>Visual Map of Aircraft</h2>
         <div id="map" aria-hidden="true"></div>
     </main>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
     <script>
         const LOCATION_IQ_KEY = 'pk.7c1fe161475d3e7b1ba78f1f8a1b5859'; 
-        
         const scanButton = document.getElementById('scan-button');
         const stopTrackBtn = document.getElementById('stop-track');
         const statusArea = document.getElementById('status-area');
         const resultsList = document.getElementById('results-list');
 
-        let trackingInterval = null;
-        let trackedIcao = null;
+        let trackingInterval = null, trackedIcao = null, map, marker;
         
-        // Map Setup
-        let map = L.map('map', {
-            zoomControl: false, 
-            keyboard: false     
-        }).setView([34.0522, -118.2437], 10); 
-
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
-
-        let marker = L.marker([0, 0]).addTo(map);
-
+        map = L.map('map', { zoomControl: false, keyboard: false }).setView([34.0522, -118.2437], 10); 
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+        marker = L.marker([0, 0]).addTo(map);
         setTimeout(() => { map.invalidateSize(); }, 800);
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
             const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
         }
@@ -115,117 +71,77 @@
 
         async function getLandmark(lat, lon) {
             try {
-                const url = `https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json`;
-                const response = await fetch(url);
+                const response = await fetch(`https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json`);
                 const data = await response.json();
-                const addr = data.address;
-                return addr.neighbourhood || addr.suburb || addr.commercial || addr.road || addr.city || "Unknown area";
+                return data.address.neighbourhood || data.address.suburb || data.address.city || "";
             } catch (e) { return ""; }
-        }
-
-        window.startTracking = function(icao, callsign) {
-            trackedIcao = icao;
-            scanButton.style.display = 'none';
-            stopTrackBtn.style.display = 'block';
-            resultsList.innerHTML = ""; 
-            statusArea.innerText = `Status: Locking onto Flight ${callsign}...`;
-            performTrackUpdate();
-            trackingInterval = setInterval(performTrackUpdate, 10000);
-        };
-
-        function stopTracking() {
-            clearInterval(trackingInterval);
-            trackedIcao = null;
-            stopTrackBtn.style.display = 'none';
-            scanButton.style.display = 'block';
-            handleScan();
         }
 
         async function performTrackUpdate() {
             navigator.geolocation.getCurrentPosition(async (pos) => {
-                const myLat = pos.coords.latitude;
-                const myLon = pos.coords.longitude;
-                
+                const myLat = pos.coords.latitude, myLon = pos.coords.longitude;
                 try {
-                    // Added CORS Proxy Fix below
                     const apiTarget = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
-                    const proxiedUrl = `https://corsproxy.io/?` + encodeURIComponent(apiTarget);
-                    
-                    const response = await fetch(proxiedUrl);
-                    const data = await response.json();
+                    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiTarget)}`);
+                    const wrapper = await response.json();
+                    const data = JSON.parse(wrapper.contents);
                     const plane = data.states ? data.states.find(p => p[0] === trackedIcao) : null;
                     
                     if (plane) {
-                        const callsign = (plane[1] || "UNK").trim();
-                        const pLat = plane[6];
-                        const pLon = plane[5];
+                        const callsign = (plane[1] || "UNK").trim(), pLat = plane[6], pLon = plane[5];
                         const dist = calculateDistance(myLat, myLon, pLat, pLon).toFixed(1);
                         const dir = getDirection(myLat, myLon, pLat, pLon);
                         const alt = plane[7] ? Math.round(plane[7] * 3.28084) : "unknown";
-                        
-                        const planePos = [pLat, pLon];
-                        map.setView(planePos, 13);
-                        marker.setLatLng(planePos).bindPopup(`Flight ${callsign}`).openPopup();
-                        map.invalidateSize(); 
-
-                        const currentLandmark = await getLandmark(pLat, pLon);
-                        let landmarkMsg = currentLandmark ? ` over ${currentLandmark}` : "";
-
-                        const updateMsg = `Flight ${callsign}: ${dist} miles ${dir}${landmarkMsg}, altitude ${alt} feet.`;
-                        statusArea.innerText = updateMsg;
-                        resultsList.innerHTML = `<li class="flight-item">${updateMsg}</li>`;
+                        map.setView([pLat, pLon], 13);
+                        marker.setLatLng([pLat, pLon]).bindPopup(`Flight ${callsign}`).openPopup();
+                        const landmark = await getLandmark(pLat, pLon);
+                        statusArea.innerText = `Flight ${callsign}: ${dist} miles ${dir}${landmark ? ' over ' + landmark : ''}, alt ${alt} ft.`;
                     } else {
-                        statusArea.innerText = "Status: Lost contact with aircraft.";
+                        statusArea.innerText = "Status: Lost contact.";
                         stopTracking();
                     }
-                } catch (err) { 
-                    console.error("Track Error:", err);
-                    statusArea.innerText = "Status: Update error."; 
-                }
+                } catch (err) { statusArea.innerText = "Status: Tracking connection busy."; }
             });
+        }
+
+        window.startTracking = function(icao, callsign) {
+            trackedIcao = icao; scanButton.style.display = 'none'; stopTrackBtn.style.display = 'block';
+            resultsList.innerHTML = ""; statusArea.innerText = `Status: Locking onto ${callsign}...`;
+            performTrackUpdate(); trackingInterval = setInterval(performTrackUpdate, 10000);
+        };
+
+        function stopTracking() {
+            clearInterval(trackingInterval); trackedIcao = null;
+            stopTrackBtn.style.display = 'none'; scanButton.style.display = 'block';
+            handleScan();
         }
 
         async function handleScan() {
             statusArea.innerText = "Status: Scanning...";
             resultsList.innerHTML = "";
             navigator.geolocation.getCurrentPosition(async (pos) => {
-                const myLat = pos.coords.latitude;
-                const myLon = pos.coords.longitude;
+                const myLat = pos.coords.latitude, myLon = pos.coords.longitude;
                 map.setView([myLat, myLon], 10);
-                map.invalidateSize();
-                
                 try {
-                    // Added CORS Proxy Fix below
                     const apiTarget = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
-                    const proxiedUrl = `https://corsproxy.io/?` + encodeURIComponent(apiTarget);
-
-                    const response = await fetch(proxiedUrl);
-                    const data = await response.json();
-                    if (!data.states) { statusArea.innerText = "No planes found."; return; }
+                    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiTarget)}`);
+                    const wrapper = await response.json();
+                    const data = JSON.parse(wrapper.contents);
                     
+                    if (!data.states) { statusArea.innerText = "No planes found."; return; }
                     const planes = data.states.map(p => ({
-                        icao: p[0],
-                        callsign: (p[1] || "UNK").trim(),
+                        icao: p[0], callsign: (p[1] || "UNK").trim(),
                         dist: calculateDistance(myLat, myLon, p[6], p[5]),
-                        dir: getDirection(myLat, myLon, p[6], p[5]),
-                        alt: p[7] ? Math.round(p[7] * 3.28084) : 0
+                        dir: getDirection(myLat, myLon, p[6], p[5]), alt: p[7] ? Math.round(p[7] * 3.28084) : 0
                     })).sort((a, b) => a.dist - b.dist);
 
                     planes.slice(0, 10).forEach(p => {
-                        const li = document.createElement('li');
-                        li.className = 'flight-item';
-                        li.innerHTML = `
-                            <strong>Flight ${p.callsign}</strong><br>
-                            ${p.dist.toFixed(1)} miles ${p.dir}, ${p.alt} feet.<br>
-                            <button class="track-btn" onclick="startTracking('${p.icao}', '${p.callsign}')">Track ${p.callsign}</button>
-                        `;
+                        const li = document.createElement('li'); li.className = 'flight-item';
+                        li.innerHTML = `<strong>Flight ${p.callsign}</strong><br>${p.dist.toFixed(1)} miles ${p.dir}, ${p.alt} ft.<br><button class="track-btn" onclick="startTracking('${p.icao}', '${p.callsign}')">Track ${p.callsign}</button>`;
                         resultsList.appendChild(li);
                     });
-                    statusArea.innerText = `Status: Found ${planes.length} planes. Showing nearest 10.`;
-                } catch (err) { 
-                    console.error("Scan Error:", err);
-                    statusArea.innerText = "Status: Scan failed."; 
-                }
+                    statusArea.innerText = `Status: Found ${planes.length} planes.`;
+                } catch (err) { statusArea.innerText = "Status: Scan busy. Try again in a moment."; }
             });
         }
 
