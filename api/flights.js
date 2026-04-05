@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-    const { lat, lon } = req.query; // Get user location from the request
+    const { lat, lon } = req.query;
     const clientID = process.env.OPENSKY_ID;
     const clientSecret = process.env.OPENSKY_SECRET;
 
@@ -7,8 +7,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Location coordinates required" });
     }
 
-    // 1. Create a Bounding Box (~25 miles around you)
-    const offset = 0.4; // Roughly 25-30 miles in lat/lon degrees
+    // Increased offset to 1.5 (~100 miles) to ensure we find planes
+    const offset = 1.5; 
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
     const lamax = parseFloat(lat) + offset;
@@ -18,18 +18,31 @@ export default async function handler(req, res) {
 
     try {
         const auth = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
+        
         const response = await fetch(url, {
-            headers: { 'Authorization': `Basic ${auth}` }
+            method: 'GET',
+            headers: { 
+                'Authorization': `Basic ${auth}`,
+                'Accept': 'application/json',
+                'User-Agent': 'AudioRadar-Client/1.0' 
+            }
         });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            return res.status(response.status).json({ error: `OpenSky returned ${response.status}`, details: errText });
+        }
+
         const data = await response.json();
 
-        if (!data.states) return res.status(200).json([]);
+        if (!data.states) {
+            return res.status(200).json([]);
+        }
 
-        // 2. Map and Calculate Distance
         const flights = data.states.map(f => {
             const fLat = f[6];
             const fLon = f[5];
-            const dist = calculateDistance(lat, lon, fLat, fLon);
+            const dist = calculateDistance(parseFloat(lat), parseFloat(lon), fLat, fLon);
             return {
                 icao24: f[0],
                 callsign: f[1] ? f[1].trim() : "N/A",
@@ -40,18 +53,17 @@ export default async function handler(req, res) {
             };
         });
 
-        // 3. Sort by closest and take top 10
         const sorted = flights.sort((a, b) => a.distance - b.distance).slice(0, 10);
-
         res.status(200).json(sorted);
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        // This will now tell us if it's a DNS issue, Timeout, etc.
+        res.status(500).json({ error: "Fetch operation failed", message: error.message });
     }
 }
 
-// Distance helper function
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 3958.8; // Radius of Earth in miles
+    const R = 3958.8; // Radius in miles
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
