@@ -37,9 +37,9 @@
         <div id="map" aria-hidden="true"></div>
     </main>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- 1. PASTE YOUR CREDENTIALS FROM NOTEPAD HERE ---
+        // --- 1. YOUR CREDENTIALS ---
         const OS_ID = 'kellmaster1-api-client'; 
         const OS_SECRET = 'b0O8vDccf1QHAfoS0Mum48qnM8m9KQFY';
         const LOCATION_IQ_KEY = 'pk.7c1fe161475d3e7b1ba78f1f8a1b5859'; 
@@ -50,49 +50,11 @@
         const resultsList = document.getElementById('results-list');
 
         let trackingInterval = null, trackedIcao = null, map, marker;
-        let currentToken = null;
 
         // Initialize Map
         map = L.map('map', { zoomControl: false, keyboard: false }).setView([34.0522, -118.2437], 10); 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© OpenStreetMap' }).addTo(map);
         marker = L.marker([0, 0]).addTo(map);
-
-// Updated Helper: Get OAuth2 Token with more robust proxy handling
-        async function getOpenSkyToken() {
-            try {
-                const authTarget = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
-                
-                // We build the body string manually to ensure the proxy sends it correctly
-                const bodyString = `grant_type=client_credentials&client_id=${encodeURIComponent(OS_ID)}&client_secret=${encodeURIComponent(OS_SECRET)}`;
-
-                const response = await fetch(`https://api.allorigins.win/post?url=${encodeURIComponent(authTarget)}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    body: bodyString
-                });
-                
-                if (!response.ok) throw new Error("Proxy connection failed");
-
-                const wrapper = await response.json();
-                
-                // AllOrigins wraps the response in a "contents" string
-                if (!wrapper.contents) throw new Error("No data returned from proxy");
-                
-                const data = JSON.parse(wrapper.contents);
-                
-                if (data.error) {
-                    console.error("OpenSky Auth Error:", data.error_description);
-                    return null;
-                }
-
-                return data.access_token;
-            } catch (e) {
-                console.error("Auth Exception:", e);
-                return null;
-            }
-        }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
@@ -110,24 +72,30 @@
         }
 
         async function handleScan() {
-            statusArea.innerText = "Status: Authorizing...";
+            statusArea.innerText = "Status: Locating you...";
             resultsList.innerHTML = "";
             
-            if (!currentToken) currentToken = await getOpenSkyToken();
-            if (!currentToken) { statusArea.innerText = "Status: Login Failed."; return; }
-
             navigator.geolocation.getCurrentPosition(async (pos) => {
                 const myLat = pos.coords.latitude, myLon = pos.coords.longitude;
                 map.setView([myLat, myLon], 10);
+                statusArea.innerText = "Status: Scanning Sky...";
+
                 try {
                     const apiTarget = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
-                    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiTarget)}`, {
-                        headers: { 'Authorization': `Bearer ${currentToken}` }
+                    
+                    // We encode your ID and Secret into a "Basic Auth" string
+                    const auth = btoa(`${OS_ID}:${OS_SECRET}`);
+
+                    // We use the "raw" AllOrigins proxy which is often better for headers
+                    const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(apiTarget)}`, {
+                        headers: { 'Authorization': `Basic ${auth}` }
                     });
-                    const wrapper = await response.json();
-                    const data = JSON.parse(wrapper.contents);
+
+                    if (!response.ok) throw new Error("Server rejected request");
+                    const data = await response.json();
                     
                     if (!data.states) { statusArea.innerText = "No planes found."; return; }
+                    
                     const planes = data.states.map(p => ({
                         icao: p[0], callsign: (p[1] || "UNK").trim(),
                         dist: calculateDistance(myLat, myLon, p[6], p[5]),
@@ -140,7 +108,10 @@
                         resultsList.appendChild(li);
                     });
                     statusArea.innerText = `Status: Found ${planes.length} planes.`;
-                } catch (err) { statusArea.innerText = "Status: Scan error. Try again."; currentToken = null; }
+                } catch (err) { 
+                    console.error(err);
+                    statusArea.innerText = "Status: Scan error. Try again."; 
+                }
             });
         }
 
@@ -155,12 +126,14 @@
                 const myLat = pos.coords.latitude, myLon = pos.coords.longitude;
                 try {
                     const apiTarget = `https://opensky-network.org/api/states/all?lamin=${myLat-0.5}&lomin=${myLon-0.5}&lamax=${myLat+0.5}&lomax=${myLon+0.5}`;
-                    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiTarget)}`, {
-                        headers: { 'Authorization': `Bearer ${currentToken}` }
+                    const auth = btoa(`${OS_ID}:${OS_SECRET}`);
+                    
+                    const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(apiTarget)}`, {
+                        headers: { 'Authorization': `Basic ${auth}` }
                     });
-                    const wrapper = await response.json();
-                    const data = JSON.parse(wrapper.contents);
+                    const data = await response.json();
                     const plane = data.states ? data.states.find(p => p[0] === trackedIcao) : null;
+                    
                     if (plane) {
                         const callsign = (plane[1] || "UNK").trim(), pLat = plane[6], pLon = plane[5];
                         const dist = calculateDistance(myLat, myLon, pLat, pLon).toFixed(1);
