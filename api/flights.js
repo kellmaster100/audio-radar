@@ -1,8 +1,6 @@
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-// ... the rest of the code remains the same ...
-export default async function handler(req, res) {
     const { lat, lon } = req.query;
     const clientID = process.env.OPENSKY_ID;
     const clientSecret = process.env.OPENSKY_SECRET;
@@ -11,7 +9,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Location coordinates required" });
     }
 
-    // Increased offset to 1.5 (~100 miles) to ensure we find planes
+    // Radius: ~100 miles
     const offset = 1.5; 
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
@@ -21,6 +19,7 @@ export default async function handler(req, res) {
     const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
 
     try {
+        // Modern way to do Basic Auth in a Module
         const auth = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
         
         const response = await fetch(url, {
@@ -61,13 +60,12 @@ export default async function handler(req, res) {
         res.status(200).json(sorted);
 
     } catch (error) {
-        // This will now tell us if it's a DNS issue, Timeout, etc.
-        res.status(500).json({ error: "Fetch operation failed", message: error.message });
+        res.status(500).json({ error: "Flight fetch failed", details: error.message });
     }
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 3958.8; // Radius in miles
+    const R = 3958.8;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
