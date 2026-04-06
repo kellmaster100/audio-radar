@@ -1,3 +1,7 @@
+import fetch from 'node-fetch';
+
+export default async function handler(req, res) {
+// ... the rest of the code remains the same ...
 export default async function handler(req, res) {
     const { lat, lon } = req.query;
     const clientID = process.env.OPENSKY_ID;
