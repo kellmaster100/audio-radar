@@ -5,23 +5,18 @@ export default async function handler(req, res) {
     const clientID = process.env.OPENSKY_ID;
     const clientSecret = process.env.OPENSKY_SECRET;
 
-    if (!lat || !lon) {
-        return res.status(400).json({ error: "Location required" });
-    }
+    if (!lat || !lon) return res.status(400).json({ error: "Location required" });
 
-    console.log(`Starting AudioRadar scan for Lat: ${lat}, Lon: ${lon}`);
-
-    const offset = 0.4; // Approx 25 miles
+    const offset = 0.4; // ~25 miles
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
     const lamax = parseFloat(lat) + offset;
     const lomax = parseFloat(lon) + offset;
 
     try {
-        // --- STEP 1: GET OAUTH2 TOKEN ---
-        // This is the new "Handshake" required since 2025/2026
-        console.log("Exchanging credentials for Access Token...");
+        console.log("AudioRadar: Requesting OAuth2 Token...");
         
+        // This is the specific production URL for OpenSky's Keycloak Auth server
         const tokenResponse = await fetch('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -30,36 +25,32 @@ export default async function handler(req, res) {
                 'client_id': clientID,
                 'client_secret': clientSecret
             }),
-            signal: AbortSignal.timeout(6000)
+            signal: AbortSignal.timeout(8000) // 8 seconds for the handshake
         });
 
         if (!tokenResponse.ok) {
-            const errText = await tokenResponse.text();
-            throw new Error(`Auth failed: ${tokenResponse.status}. Check your Vercel Environment Variables.`);
+            const errBody = await tokenResponse.text();
+            console.error(`Auth Failed (${tokenResponse.status}): ${errBody}`);
+            throw new Error("Authentication failed. Check your Vercel Environment Variables.");
         }
 
-        const tokenData = await tokenResponse.json();
-        const accessToken = tokenData.access_token;
-        console.log("Access Token received. Requesting flight data...");
+        const { access_token } = await tokenResponse.json();
+        console.log("AudioRadar: Token acquired. Fetching aircraft states...");
 
-        // --- STEP 2: FETCH FLIGHTS WITH TOKEN ---
         const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
         
         const response = await fetch(url, {
-            method: 'GET',
             headers: { 
-                'Authorization': `Bearer ${accessToken}`,
+                'Authorization': `Bearer ${access_token}`,
                 'Accept': 'application/json'
             },
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(10000) // 10 seconds for the data
         });
 
-        if (!response.ok) {
-            throw new Error(`OpenSky Data Error: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Data server responded with ${response.status}`);
 
         const data = await response.json();
-        console.log(`Success! Found ${data.states ? data.states.length : 0} aircraft.`);
+        console.log(`AudioRadar: Success! Found ${data.states ? data.states.length : 0} aircraft.`);
 
         if (!data.states) return res.status(200).json([]);
 
@@ -78,22 +69,17 @@ export default async function handler(req, res) {
         res.status(200).json(flights.sort((a, b) => a.distance - b.distance).slice(0, 10));
 
     } catch (error) {
-        console.error("CRITICAL ERROR:", error.message);
-        res.status(500).json({ 
-            error: "Connection failed", 
-            message: error.message,
-            tip: "This usually means the OpenSky token server is slow. Try again in 10 seconds."
-        });
+        console.error("AudioRadar Error:", error.message);
+        res.status(500).json({ error: "Connection error", message: error.message });
     }
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 3958.8; // Miles
+    const R = 3958.8;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
               Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
               Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
