@@ -5,52 +5,46 @@ export default async function handler(req, res) {
     const clientID = process.env.OPENSKY_ID;
     const clientSecret = process.env.OPENSKY_SECRET;
 
-    if (!lat || !lon) return res.status(400).json({ error: "Location required" });
+    if (!lat || !lon) return res.status(400).json({ error: "Location missing" });
 
-    const offset = 0.4; // ~25 miles
+    const offset = 0.4;
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
     const lamax = parseFloat(lat) + offset;
     const lomax = parseFloat(lon) + offset;
 
     try {
-        console.log("AudioRadar: Requesting OAuth2 Token...");
+        console.log("Step 1: Requesting Token...");
         
-        // This is the specific production URL for OpenSky's Keycloak Auth server
+        // We use Basic Auth to ASK for the Bearer Token - this is the standard OAuth2 'Machine-to-Machine' flow
+        const authHeader = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
+        
         const tokenResponse = await fetch('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                'grant_type': 'client_credentials',
-                'client_id': clientID,
-                'client_secret': clientSecret
-            }),
-            signal: AbortSignal.timeout(8000) // 8 seconds for the handshake
+            headers: { 
+                'Authorization': `Basic ${authHeader}`,
+                'Content-Type': 'application/x-www-form-urlencoded' 
+            },
+            body: new URLSearchParams({ 'grant_type': 'client_credentials' })
+            // No internal timeout here - let Vercel handle the limit
         });
 
         if (!tokenResponse.ok) {
             const errBody = await tokenResponse.text();
-            console.error(`Auth Failed (${tokenResponse.status}): ${errBody}`);
-            throw new Error("Authentication failed. Check your Vercel Environment Variables.");
+            throw new Error(`Token Exchange Failed: ${tokenResponse.status} - ${errBody}`);
         }
 
         const { access_token } = await tokenResponse.json();
-        console.log("AudioRadar: Token acquired. Fetching aircraft states...");
+        console.log("Step 2: Token Acquired. Fetching Data...");
 
         const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
         
         const response = await fetch(url, {
-            headers: { 
-                'Authorization': `Bearer ${access_token}`,
-                'Accept': 'application/json'
-            },
-            signal: AbortSignal.timeout(10000) // 10 seconds for the data
+            headers: { 'Authorization': `Bearer ${access_token}` }
         });
 
-        if (!response.ok) throw new Error(`Data server responded with ${response.status}`);
-
         const data = await response.json();
-        console.log(`AudioRadar: Success! Found ${data.states ? data.states.length : 0} aircraft.`);
+        console.log(`Step 3: Success! Found ${data.states ? data.states.length : 0} aircraft.`);
 
         if (!data.states) return res.status(200).json([]);
 
