@@ -7,44 +7,44 @@ export default async function handler(req, res) {
 
     if (!lat || !lon) return res.status(400).json({ error: "Location missing" });
 
-    const offset = 0.4;
+    const offset = 0.4; // ~25 miles
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
     const lamax = parseFloat(lat) + offset;
     const lomax = parseFloat(lon) + offset;
 
     try {
-        console.log("Step 1: Requesting Token...");
-        
-        // We use Basic Auth to ASK for the Bearer Token - this is the standard OAuth2 'Machine-to-Machine' flow
-        const authHeader = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
-        
+        console.log("AudioRadar: Initiating Handshake...");
+
+        // We use the direct Token URL from the 2026 OpenSky FAQ
         const tokenResponse = await fetch('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', {
             method: 'POST',
-            headers: { 
-                'Authorization': `Basic ${authHeader}`,
-                'Content-Type': 'application/x-www-form-urlencoded' 
-            },
-            body: new URLSearchParams({ 'grant_type': 'client_credentials' })
-            // No internal timeout here - let Vercel handle the limit
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                'grant_type': 'client_credentials',
+                'client_id': clientID,
+                'client_secret': clientSecret
+            })
+            // We removed the manual timeout to let the server breathe
         });
 
         if (!tokenResponse.ok) {
-            const errBody = await tokenResponse.text();
-            throw new Error(`Token Exchange Failed: ${tokenResponse.status} - ${errBody}`);
+            const err = await tokenResponse.text();
+            throw new Error(`Auth Server Refused: ${tokenResponse.status}`);
         }
 
-        const { access_token } = await tokenResponse.json();
-        console.log("Step 2: Token Acquired. Fetching Data...");
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.access_token;
+        console.log("AudioRadar: Key Accepted. Accessing Airspace...");
 
         const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
         
         const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${access_token}` }
+            headers: { 'Authorization': `Bearer ${accessToken}` }
         });
 
         const data = await response.json();
-        console.log(`Step 3: Success! Found ${data.states ? data.states.length : 0} aircraft.`);
+        console.log(`AudioRadar: Found ${data.states ? data.states.length : 0} aircraft.`);
 
         if (!data.states) return res.status(200).json([]);
 
@@ -63,8 +63,8 @@ export default async function handler(req, res) {
         res.status(200).json(flights.sort((a, b) => a.distance - b.distance).slice(0, 10));
 
     } catch (error) {
-        console.error("AudioRadar Error:", error.message);
-        res.status(500).json({ error: "Connection error", message: error.message });
+        console.error("AudioRadar Log:", error.message);
+        res.status(500).json({ error: "API Timeout", details: error.message });
     }
 }
 
