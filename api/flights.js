@@ -6,22 +6,22 @@ export default async function handler(req, res) {
     const clientSecret = process.env.OPENSKY_SECRET;
 
     if (!lat || !lon) {
-        return res.status(400).json({ error: "Location coordinates required" });
+        return res.status(400).json({ error: "Location required" });
     }
 
-    console.log(`Starting scan for Lat: ${lat}, Lon: ${lon}`);
+    console.log(`Starting AudioRadar scan for Lat: ${lat}, Lon: ${lon}`);
 
-    // Coordinates for the ~25 mile search area
-    const offset = 0.4; 
+    const offset = 0.4; // Approx 25 miles
     const lamin = parseFloat(lat) - offset;
     const lomin = parseFloat(lon) - offset;
     const lamax = parseFloat(lat) + offset;
     const lomax = parseFloat(lon) + offset;
 
     try {
-        // --- STEP 1: THE OAUTH2 HANDSHAKE ---
-        // We exchange your ID and Secret for a temporary Access Token
-        console.log("Requesting OAuth2 Token...");
+        // --- STEP 1: GET OAUTH2 TOKEN ---
+        // This is the new "Handshake" required since 2025/2026
+        console.log("Exchanging credentials for Access Token...");
+        
         const tokenResponse = await fetch('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -30,37 +30,36 @@ export default async function handler(req, res) {
                 'client_id': clientID,
                 'client_secret': clientSecret
             }),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(6000)
         });
 
         if (!tokenResponse.ok) {
-            const tokenErr = await tokenResponse.text();
-            throw new Error(`Auth Failed: ${tokenResponse.status} - ${tokenErr}`);
+            const errText = await tokenResponse.text();
+            throw new Error(`Auth failed: ${tokenResponse.status}. Check your Vercel Environment Variables.`);
         }
 
-        const { access_token } = await tokenResponse.json();
-        console.log("OAuth2 Token acquired successfully.");
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.access_token;
+        console.log("Access Token received. Requesting flight data...");
 
-        // --- STEP 2: GET THE FLIGHT DATA ---
-        // We use the 'Bearer' token in the header as required by the new API rules
+        // --- STEP 2: FETCH FLIGHTS WITH TOKEN ---
         const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
         
         const response = await fetch(url, {
             method: 'GET',
             headers: { 
-                'Authorization': `Bearer ${access_token}`,
+                'Authorization': `Bearer ${accessToken}`,
                 'Accept': 'application/json'
             },
             signal: AbortSignal.timeout(8000)
         });
 
         if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`OpenSky API Error: ${response.status} - ${errText}`);
+            throw new Error(`OpenSky Data Error: ${response.status}`);
         }
 
         const data = await response.json();
-        console.log(`Found ${data.states ? data.states.length : 0} aircraft.`);
+        console.log(`Success! Found ${data.states ? data.states.length : 0} aircraft.`);
 
         if (!data.states) return res.status(200).json([]);
 
@@ -81,15 +80,15 @@ export default async function handler(req, res) {
     } catch (error) {
         console.error("CRITICAL ERROR:", error.message);
         res.status(500).json({ 
-            error: "Connection issue", 
+            error: "Connection failed", 
             message: error.message,
-            tip: "If the error persists, check if your OpenSky credentials have expired." 
+            tip: "This usually means the OpenSky token server is slow. Try again in 10 seconds."
         });
     }
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 3958.8; // Radius of Earth in miles
+    const R = 3958.8; // Miles
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
