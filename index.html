@@ -75,8 +75,9 @@
 
             // 2. Browser Direct Setup
             const offset = 0.25;
-            const proxy = "https://corsproxy.io/?";
-            const target = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
+// Switching to a different public proxy that is usually more reliable
+const proxy = "https://api.allorigins.win/raw?url=";
+const target = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
 
             try {
                 const response = await fetch(proxy + encodeURIComponent(target));
