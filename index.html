@@ -31,8 +31,8 @@
     <div id="flight-list" aria-live="polite">
         </div>
 
-    <script>
-        // --- DISTANCE MATH ---
+<script>
+        // --- HELPER: DISTANCE MATH (MILES) ---
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
             const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -43,48 +43,56 @@
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
         }
 
-        // --- UI UPDATE ---
+        // --- HELPER: UPDATE UI LIST ---
         function updateFlightList(flights) {
             const list = document.getElementById('flight-list');
             list.innerHTML = '';
-            if (flights.length === 0) return;
+            
+            if (!flights || flights.length === 0) return;
 
             flights.forEach(f => {
                 const item = document.createElement('div');
                 item.className = 'flight-item';
-                item.innerHTML = `<strong>${f.callsign}</strong> - ${f.distance} miles away, ${f.altitude} feet`;
+                // JAWS will read this as: "Callsign, Distance miles away, Altitude feet"
+                item.innerHTML = `<h3>${f.callsign}</h3><p>${f.distance} miles away, ${f.altitude} feet altitude.</p>`;
                 list.appendChild(item);
             });
         }
 
-        // --- MAIN FUNCTION ---
+        // --- MAIN SCAN FUNCTION ---
         async function scanForFlights() {
             const status = document.getElementById('status');
             const btn = document.getElementById('scan-btn');
             
-            // 1. Visual/Audio feedback immediately
-            status.innerText = "Scanning now...";
+            // Audio-friendly status update
+            status.innerText = "Scanning the Riverside airspace...";
             btn.disabled = true;
 
             const lat = parseFloat(document.getElementById('lat').value);
             const lon = parseFloat(document.getElementById('lon').value);
 
-            /* --- VERCEL METHOD PAUSED ---
-            // const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
-            */
+            // Bounding box for approximately 25 miles
+            const offset = 0.36;
+            const lamin = lat - offset;
+            const lomin = lon - offset;
+            const lamax = lat + offset;
+            const lomax = lon + offset;
 
-            // 2. Browser Direct Setup
-            const offset = 0.25;
-// Switching to a different public proxy that is usually more reliable
-const proxy = "https://api.allorigins.win/raw?url=";
-const target = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
+            const targetUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+            
+            // Using AllOrigins JSON wrapper - the most reliable way to bypass CORS today
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
 
             try {
-                const response = await fetch(proxy + encodeURIComponent(target));
-                const data = await response.json();
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error("Proxy connection failed.");
+                
+                const wrapper = await response.json();
+                // AllOrigins wraps the result in a "contents" string
+                const data = JSON.parse(wrapper.contents);
                 
                 if (!data.states || data.states.length === 0) {
-                    status.innerText = "No aircraft found in the Riverside area.";
+                    status.innerText = "No aircraft found within 25 miles of your location.";
                     updateFlightList([]);
                 } else {
                     const flights = data.states.map(f => {
@@ -95,13 +103,15 @@ const target = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&l
                             distance: calculateDistance(lat, lon, f[6], f[5]).toFixed(1)
                         };
                     });
+
+                    // Sort so the closest plane is at the top for the screen reader
                     const sorted = flights.sort((a, b) => a.distance - b.distance).slice(0, 10);
                     status.innerText = `Found ${sorted.length} aircraft.`;
                     updateFlightList(sorted);
                 }
             } catch (err) {
-                console.error(err);
-                status.innerText = "Connection error. Please try again.";
+                console.error("Scan error:", err);
+                status.innerText = "Connection error. OpenSky or the proxy might be busy.";
             } finally {
                 btn.disabled = false;
             }
