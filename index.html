@@ -3,140 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Radar - Aircraft Tracker</title>
+    <title>Audio Radar</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 20px; max-width: 600px; margin: 0 auto; background-color: #f4f4f9; }
-        h1 { color: #333; text-align: center; }
-        .controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        input { padding: 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
-        button { padding: 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: bold; }
-        button:active { background-color: #0056b3; }
-        #status { text-align: center; font-weight: bold; margin-top: 10px; }
-        .flight-item { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .flight-item h3 { margin: 0 0 5px 0; color: #007bff; }
-        .flight-item p { margin: 2px 0; font-size: 14px; color: #555; }
-        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+        body { font-family: sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; }
+        .controls { display: flex; flex-direction: column; gap: 10px; border: 1px solid #ccc; padding: 15px; border-radius: 8px; }
+        input { padding: 10px; font-size: 16px; }
+        button { padding: 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; }
+        #status { margin-top: 15px; font-weight: bold; min-height: 1.2em; }
+        .flight-item { border-bottom: 1px solid #eee; padding: 10px 0; }
     </style>
 </head>
 <body>
 
     <h1>Audio Radar</h1>
 
-    <div class="controls" role="form" aria-label="Location Settings">
-        <label for="lat">Latitude:</label>
+    <div class="controls">
+        <label for="lat">Latitude</label>
         <input type="number" id="lat" value="33.9854" step="0.0001">
         
-        <label for="lon">Longitude:</label>
+        <label for="lon">Longitude</label>
         <input type="number" id="lon" value="-117.3659" step="0.0001">
 
         <button id="scan-btn" onclick="scanForFlights()">Scan for Aircraft</button>
         <div id="status" aria-live="polite">Ready to scan.</div>
     </div>
 
-    <div id="flight-list" aria-live="polite" role="region" aria-label="Flight Search Results">
+    <div id="flight-list" aria-live="polite">
         </div>
 
     <script>
-        // --- HELPER: CALCULATE DISTANCE ---
+        // --- DISTANCE MATH ---
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 3958.8; // Radius of Earth in miles
+            const R = 3958.8;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
             const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
                       Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
                       Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return R * c;
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
         }
 
-        // --- HELPER: UPDATE UI ---
+        // --- UI UPDATE ---
         function updateFlightList(flights) {
             const list = document.getElementById('flight-list');
-            const status = document.getElementById('status');
             list.innerHTML = '';
-
-            if (flights.length === 0) {
-                status.innerText = "No aircraft found in your area right now.";
-                return;
-            }
-
-            status.innerText = `Found ${flights.length} aircraft.`;
+            if (flights.length === 0) return;
 
             flights.forEach(f => {
                 const item = document.createElement('div');
                 item.className = 'flight-item';
-                item.innerHTML = `
-                    <h3>${f.callsign}</h3>
-                    <p>Distance: <strong>${f.distance} miles</strong></p>
-                    <p>Altitude: ${f.altitude} feet</p>
-                    <p>ICAO: ${f.icao24}</p>
-                `;
+                item.innerHTML = `<strong>${f.callsign}</strong> - ${f.distance} miles away, ${f.altitude} feet`;
                 list.appendChild(item);
             });
         }
 
-        // --- MAIN SCAN FUNCTION ---
+        // --- MAIN FUNCTION ---
         async function scanForFlights() {
-            const lat = parseFloat(document.getElementById('lat').value);
-            const lon = parseFloat(document.getElementById('lon').value);
             const status = document.getElementById('status');
             const btn = document.getElementById('scan-btn');
-
-            status.innerText = "Scanning airspace...";
+            
+            // 1. Visual/Audio feedback immediately
+            status.innerText = "Scanning now...";
             btn.disabled = true;
 
-            /* --- VERCEL SERVER METHOD (TEMPORARILY DISABLED) ---
-            // To restore, remove the '/*' and '*/' symbols around this block.
-            try {
-                const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
-                const data = await response.json();
-                updateFlightList(data);
-                btn.disabled = false;
-                return; 
-            } catch (err) {
-                console.error("Vercel API failed, falling back to browser...");
-            }
+            const lat = parseFloat(document.getElementById('lat').value);
+            const lon = parseFloat(document.getElementById('lon').value);
+
+            /* --- VERCEL METHOD PAUSED ---
+            // const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
             */
 
-            // --- BROWSER DIRECT METHOD (ACTIVE) ---
-            const offset = 0.25; // Riverside Area Range
-            const lamin = lat - offset;
-            const lomin = lon - offset;
-            const lamax = lat + offset;
-            const lomax = lon + offset;
-
-            // Using a public CORS proxy to bypass security blocks
+            // 2. Browser Direct Setup
+            const offset = 0.25;
             const proxy = "https://corsproxy.io/?";
-            const target = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+            const target = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
 
             try {
                 const response = await fetch(proxy + encodeURIComponent(target));
-                if (!response.ok) throw new Error("Proxy or OpenSky server busy");
-                
                 const data = await response.json();
                 
-                if (!data.states) {
+                if (!data.states || data.states.length === 0) {
+                    status.innerText = "No aircraft found in the Riverside area.";
                     updateFlightList([]);
-                    btn.disabled = false;
-                    return;
+                } else {
+                    const flights = data.states.map(f => {
+                        return {
+                            icao24: f[0],
+                            callsign: f[1] ? f[1].trim() : "Unknown",
+                            altitude: f[7] ? Math.round(f[7] * 3.28084) : 0,
+                            distance: calculateDistance(lat, lon, f[6], f[5]).toFixed(1)
+                        };
+                    });
+                    const sorted = flights.sort((a, b) => a.distance - b.distance).slice(0, 10);
+                    status.innerText = `Found ${sorted.length} aircraft.`;
+                    updateFlightList(sorted);
                 }
-
-                const flights = data.states.map(f => {
-                    const dist = calculateDistance(lat, lon, f[6], f[5]);
-                    return {
-                        icao24: f[0],
-                        callsign: f[1] ? f[1].trim() : "Unknown",
-                        altitude: f[7] ? Math.round(f[7] * 3.28084) : 0,
-                        distance: dist.toFixed(1)
-                    };
-                });
-
-                const sorted = flights.sort((a, b) => a.distance - b.distance).slice(0, 10);
-                updateFlightList(sorted);
-
             } catch (err) {
-                console.error("Browser Scan Error:", err);
-                status.innerText = "Scan failed. Please wait 10 seconds and try again.";
+                console.error(err);
+                status.innerText = "Connection error. Please try again.";
             } finally {
                 btn.disabled = false;
             }
