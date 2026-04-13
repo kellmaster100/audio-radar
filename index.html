@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Radar v2</title>
+    <title>Audio Radar v2 - Live Tracking</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         /* High-Contrast Accessible Dark Mode */
@@ -21,14 +21,18 @@
             border-radius: 4px; font-size: 18px; font-weight: bold; cursor: pointer; 
         }
         button:disabled { background-color: #555; color: #888; }
+        .stop-btn { background-color: #e74c3c; color: white; margin-top: 10px; }
+        
         #status { margin-top: 15px; font-weight: bold; color: #f39c12; min-height: 1.2em; }
+        
         .flight-item { 
             border-bottom: 1px solid #333; padding: 15px 0; 
             display: flex; justify-content: space-between; align-items: center;
         }
         .flight-info { flex-grow: 1; }
-        .track-btn { padding: 8px 12px; font-size: 14px; margin-left: 10px; }
-        /* Map Container - hidden from screen readers to prevent focus clutter */
+        .track-btn { padding: 8px 12px; font-size: 14px; margin-left: 10px; background-color: #3498db; color: white; }
+        
+        /* Map Container - hidden from screen readers */
         #map { height: 300px; width: 100%; margin-top: 20px; border-radius: 8px; border: 2px solid #333; }
     </style>
 </head>
@@ -44,6 +48,7 @@
         <input type="number" id="lon" value="-117.3659" step="0.0001">
 
         <button id="scan-btn" onclick="scanForFlights()">Scan Riverside Airspace</button>
+        <button id="stop-btn" class="stop-btn" onclick="stopTracking()" style="display:none;">Stop Tracking</button>
         <div id="status" aria-live="polite">Ready to scan.</div>
     </div>
 
@@ -55,20 +60,21 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
     let map, markerLayer;
-    const userLat = 33.9854;
-    const userLon = -117.3659;
+    let trackingInterval = null;
+    let trackedIcao = null;
 
-    // Initialize Map
     function initMap() {
-        map = L.map('map').setView([userLat, userLon], 11);
+        const startLat = parseFloat(document.getElementById('lat').value);
+        const startLon = parseFloat(document.getElementById('lon').value);
+        map = L.map('map').setView([startLat, startLon], 11);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         markerLayer = L.layerGroup().addTo(map);
-        L.marker([userLat, userLon]).addTo(map).bindPopup("Your Location");
+        L.marker([startLat, startLon]).addTo(map).bindPopup("Your Location");
     }
     initMap();
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 3958.8;
+        const R = 3958.8; // Miles
         const dLat = (lat2 - lat1) * Math.PI / 180;
         const dLon = (lon2 - lon1) * Math.PI / 180;
         const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -87,63 +93,96 @@
         }
     }
 
-    async function updateFlightList(flights, uLat, uLon) {
-        const list = document.getElementById('flight-list');
-        list.innerHTML = '';
-        markerLayer.clearLayers();
-
-        if (flights.length === 0) return 0;
-
-        const processed = flights.map(f => ({
-            ...f,
-            distance: calculateDistance(uLat, uLon, f.lat, f.lon).toFixed(1)
-        })).sort((a, b) => a.distance - b.distance).slice(0, 5); // Limit to 5 for speed
-
-        for (const f of processed) {
-            const street = await getStreetName(f.lat, f.lon);
-            
-            // Add to Map
-            L.marker([f.lat, f.lon]).addTo(markerLayer).bindPopup(`${f.callsign}`);
-
-            // Add to List
-            const item = document.createElement('div');
-            item.className = 'flight-item';
-            item.innerHTML = `
-                <div class="flight-info">
-                    <h3>${f.callsign}</h3>
-                    <p>${f.distance} miles away, over ${street}. Altitude: ${f.altitude} ft.</p>
-                </div>
-                <button class="track-btn" onclick="trackFlight('${f.callsign}', ${f.lat}, ${f.lon})">Track</button>
-            `;
-            list.appendChild(item);
+    function stopTracking() {
+        if (trackingInterval) {
+            clearInterval(trackingInterval);
+            trackingInterval = null;
         }
-        return processed.length;
+        trackedIcao = null;
+        document.getElementById('stop-btn').style.display = 'none';
+        document.getElementById('status').innerText = "Stopped tracking.";
     }
 
-    function trackFlight(callsign, lat, lon) {
+    async function trackFlight(icao24, callsign) {
         const status = document.getElementById('status');
-        status.innerText = `Now tracking ${callsign}. Use VoiceOver/JAWS to monitor updates.`;
-        map.setView([lat, lon], 13);
+        const stopBtn = document.getElementById('stop-btn');
+        
+        stopTracking(); // Clear any existing tracking first
+        
+        trackedIcao = icao24;
+        stopBtn.style.display = 'block';
+        status.innerText = `Now tracking ${callsign}. Updates every 10 seconds.`;
+
+        trackingInterval = setInterval(async () => {
+            const uLat = parseFloat(document.getElementById('lat').value);
+            const uLon = parseFloat(document.getElementById('lon').value);
+            
+            try {
+                const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
+                const data = await response.json();
+                
+                const target = data.find(f => f.icao24 === trackedIcao);
+                
+                if (target) {
+                    const street = await getStreetName(target.lat, target.lon);
+                    const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
+                    
+                    status.innerText = `${callsign} update: ${dist} miles away, over ${street}. Altitude: ${target.altitude} ft.`;
+                    
+                    markerLayer.clearLayers();
+                    L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(callsign).openPopup();
+                    map.setView([target.lat, target.lon], 13);
+                } else {
+                    status.innerText = `${callsign} is no longer in range.`;
+                    stopTracking();
+                }
+            } catch (err) {
+                console.error("Tracking failed", err);
+            }
+        }, 10000);
     }
 
     async function scanForFlights() {
+        stopTracking();
         const status = document.getElementById('status');
         const btn = document.getElementById('scan-btn');
+        const list = document.getElementById('flight-list');
         const lat = parseFloat(document.getElementById('lat').value);
         const lon = parseFloat(document.getElementById('lon').value);
 
         status.innerText = "Scanning Riverside airspace...";
         btn.disabled = true;
+        list.innerHTML = '';
 
         try {
             const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
-            if (!response.ok) throw new Error("Server error");
             const data = await response.json();
 
-            const count = await updateFlightList(data, lat, lon);
-            status.innerText = count > 0 ? `Found ${count} aircraft nearby.` : "No aircraft found.";
+            if (data.length === 0) {
+                status.innerText = "No aircraft found.";
+            } else {
+                const processed = data.map(f => ({
+                    ...f,
+                    distance: calculateDistance(lat, lon, f.lat, f.lon).toFixed(1)
+                })).sort((a, b) => a.distance - b.distance).slice(0, 5);
+
+                for (const f of processed) {
+                    const street = await getStreetName(f.lat, f.lon);
+                    const item = document.createElement('div');
+                    item.className = 'flight-item';
+                    item.innerHTML = `
+                        <div class="flight-info">
+                            <h3>${f.callsign}</h3>
+                            <p>${f.distance} miles away, over ${street}.</p>
+                        </div>
+                        <button class="track-btn" onclick="trackFlight('${f.icao24}', '${f.callsign}')">Track</button>
+                    `;
+                    list.appendChild(item);
+                }
+                status.innerText = `Found ${processed.length} aircraft nearby.`;
+            }
         } catch (err) {
-            status.innerText = "Connection error. Ensure Vercel is online.";
+            status.innerText = "Error fetching flight data.";
         } finally {
             btn.disabled = false;
         }
