@@ -15,11 +15,13 @@
             padding: 15px; border-radius: 8px; background-color: #1e1e1e; 
         }
         input { padding: 10px; font-size: 16px; background: #2a2a2a; color: white; border: 1px solid #444; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
         button { 
-            padding: 15px; background-color: #f39c12; color: #000; border: none; 
+            flex: 1; padding: 15px; background-color: #f39c12; color: #000; border: none; 
             border-radius: 4px; font-size: 18px; font-weight: bold; cursor: pointer; 
         }
         button:disabled { background-color: #555; color: #888; }
+        .loc-btn { background-color: #3498db; color: white; }
         .stop-btn { background-color: #e74c3c; color: white; margin-top: 10px; display: none; }
         
         #status { margin-top: 15px; font-weight: bold; color: #f39c12; min-height: 1.2em; }
@@ -44,7 +46,10 @@
         <label for="lon">Longitude</label>
         <input type="number" id="lon" value="-117.3659" step="0.0001">
 
-        <button id="scan-btn" onclick="scanForFlights()">Scan Riverside Airspace</button>
+        <div class="btn-group">
+            <button id="loc-btn" class="loc-btn" onclick="getLocation()">Use My Location</button>
+            <button id="scan-btn" onclick="scanForFlights()">Scan Airspace</button>
+        </div>
         <button id="stop-btn" class="stop-btn" onclick="stopTracking()">Stop Tracking</button>
         <div id="status" aria-live="polite">Ready to scan.</div>
     </div>
@@ -54,7 +59,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    let map, markerLayer;
+    let map, markerLayer, userMarker;
     let trackingInterval = null;
     let trackedIcao = null;
     let trackedCallsign = null;
@@ -66,8 +71,43 @@
         map = L.map('map').setView([startLat, startLon], 11);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         markerLayer = L.layerGroup().addTo(map);
-        L.marker([startLat, startLon]).addTo(map).bindPopup("Your Location");
+        updateUserMarker(startLat, startLon);
     }
+
+    function updateUserMarker(lat, lon) {
+        if (userMarker) map.removeLayer(userMarker);
+        userMarker = L.marker([lat, lon]).addTo(map).bindPopup("Your Location");
+        map.setView([lat, lon], 11);
+    }
+
+    // NEW: Get User Geolocation
+    function getLocation() {
+        const status = document.getElementById('status');
+        if (!navigator.geolocation) {
+            status.innerText = "Geolocation is not supported by your browser.";
+            return;
+        }
+
+        status.innerText = "Acquiring location... please check for browser permissions.";
+        
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude.toFixed(4);
+                const lon = position.coords.longitude.toFixed(4);
+                document.getElementById('lat').value = lat;
+                document.getElementById('lon').value = lon;
+                status.innerText = `Location found: ${lat}, ${lon}.`;
+                updateUserMarker(lat, lon);
+                // Automatically scan once location is set
+                scanForFlights();
+            },
+            (error) => {
+                status.innerText = "Unable to retrieve location. Please enter coordinates manually.";
+                console.error(error);
+            }
+        );
+    }
+
     initMap();
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -101,45 +141,34 @@
 
     async function trackFlight(icao24, callsign) {
         if (trackingInterval) clearInterval(trackingInterval);
-        
         trackedIcao = icao24.toLowerCase().trim();
         trackedCallsign = callsign.trim();
-        
         document.getElementById('stop-btn').style.display = 'block';
         const status = document.getElementById('status');
-        status.innerText = `Connecting to ${trackedCallsign}...`;
         
         const runUpdate = async () => {
             const uLat = parseFloat(document.getElementById('lat').value);
             const uLon = parseFloat(document.getElementById('lon').value);
-            
             try {
                 const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
                 const data = await response.json();
-                
-                // Flexible matching: check Hex ID OR Callsign
                 const target = data.find(f => {
                     const fIcao = (f.icao24 || f.hex || "").toLowerCase().trim();
                     const fCall = (f.callsign || "").trim();
                     return fIcao === trackedIcao || fCall === trackedCallsign;
                 });
-                
                 if (target) {
                     const street = await getStreetName(target.lat, target.lon);
                     const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
                     status.innerText = `${trackedCallsign}: ${dist} mi, over ${street}. Alt: ${target.altitude}ft.`;
-                    
                     markerLayer.clearLayers();
                     L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(trackedCallsign).openPopup();
                     map.setView([target.lat, target.lon], 13);
                 } else {
                     status.innerText = `Searching for ${trackedCallsign} signal...`;
                 }
-            } catch (err) {
-                status.innerText = "Connection lost. Retrying...";
-            }
+            } catch (err) { status.innerText = "Connection lost. Retrying..."; }
         };
-
         await runUpdate();
         trackingInterval = setInterval(runUpdate, 10000);
     }
@@ -150,15 +179,13 @@
         const list = document.getElementById('flight-list');
         const lat = parseFloat(document.getElementById('lat').value);
         const lon = parseFloat(document.getElementById('lon').value);
-
-        status.innerText = "Scanning Riverside airspace...";
+        status.innerText = "Scanning nearby airspace...";
         btn.disabled = true;
         list.innerHTML = '';
 
         try {
             const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
             const data = await response.json();
-
             if (!data || data.length === 0) {
                 status.innerText = "No aircraft found.";
             } else {
@@ -182,11 +209,8 @@
                 }
                 status.innerText = `Found ${processed.length} aircraft nearby.`;
             }
-        } catch (err) {
-            status.innerText = "Error fetching flight data.";
-        } finally {
-            btn.disabled = false;
-        }
+        } catch (err) { status.innerText = "Error fetching flight data."; }
+        finally { btn.disabled = false; }
     }
 </script>
 </body>
