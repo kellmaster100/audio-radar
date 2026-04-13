@@ -57,6 +57,7 @@
     let map, markerLayer;
     let trackingInterval = null;
     let trackedIcao = null;
+    let trackedCallsign = null;
 
     function initMap() {
         const startLat = parseFloat(document.getElementById('lat').value);
@@ -93,18 +94,20 @@
         if (trackingInterval) clearInterval(trackingInterval);
         trackingInterval = null;
         trackedIcao = null;
+        trackedCallsign = null;
         document.getElementById('stop-btn').style.display = 'none';
         document.getElementById('status').innerText = "Tracking stopped.";
     }
 
     async function trackFlight(icao24, callsign) {
-        // Clear any existing timer without clearing the status message yet
         if (trackingInterval) clearInterval(trackingInterval);
         
-        trackedIcao = icao24.toLowerCase(); 
+        trackedIcao = icao24.toLowerCase().trim();
+        trackedCallsign = callsign.trim();
+        
         document.getElementById('stop-btn').style.display = 'block';
         const status = document.getElementById('status');
-        status.innerText = `Initializing tracking for ${callsign}...`;
+        status.innerText = `Connecting to ${trackedCallsign}...`;
         
         const runUpdate = async () => {
             const uLat = parseFloat(document.getElementById('lat').value);
@@ -114,31 +117,31 @@
                 const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
                 const data = await response.json();
                 
-                // Find by matching hex or icao24, forced to lowercase for accuracy
-                const target = data.find(f => 
-                    (f.icao24 && f.icao24.toLowerCase() === trackedIcao) || 
-                    (f.hex && f.hex.toLowerCase() === trackedIcao)
-                );
+                // Flexible matching: check Hex ID OR Callsign
+                const target = data.find(f => {
+                    const fIcao = (f.icao24 || f.hex || "").toLowerCase().trim();
+                    const fCall = (f.callsign || "").trim();
+                    return fIcao === trackedIcao || fCall === trackedCallsign;
+                });
                 
                 if (target) {
                     const street = await getStreetName(target.lat, target.lon);
                     const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
-                    status.innerText = `${callsign}: ${dist} mi away, over ${street}. Alt: ${target.altitude}ft.`;
+                    status.innerText = `${trackedCallsign}: ${dist} mi, over ${street}. Alt: ${target.altitude}ft.`;
                     
                     markerLayer.clearLayers();
-                    L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(callsign).openPopup();
+                    L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(trackedCallsign).openPopup();
                     map.setView([target.lat, target.lon], 13);
                 } else {
-                    // Don't stop immediately, just update status. It might reappear.
-                    status.innerText = `Searching for ${callsign} signal...`;
+                    status.innerText = `Searching for ${trackedCallsign} signal...`;
                 }
             } catch (err) {
                 status.innerText = "Connection lost. Retrying...";
             }
         };
 
-        await runUpdate(); // First check
-        trackingInterval = setInterval(runUpdate, 10000); // Repeat every 10s
+        await runUpdate();
+        trackingInterval = setInterval(runUpdate, 10000);
     }
 
     async function scanForFlights() {
@@ -151,10 +154,6 @@
         status.innerText = "Scanning Riverside airspace...";
         btn.disabled = true;
         list.innerHTML = '';
-        
-        // We don't stopTracking() here automatically to allow scanning while tracking
-        // But for clarity, if a new scan happens, we hide the stop button unless tracking is active
-        if (!trackingInterval) document.getElementById('stop-btn').style.display = 'none';
 
         try {
             const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
