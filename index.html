@@ -3,14 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Radar</title>
+    <title>Audio Radar v2</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; }
-        .controls { display: flex; flex-direction: column; gap: 10px; border: 1px solid #ccc; padding: 15px; border-radius: 8px; }
-        input { padding: 10px; font-size: 16px; }
-        button { padding: 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; }
-        #status { margin-top: 15px; font-weight: bold; min-height: 1.2em; }
-        .flight-item { border-bottom: 1px solid #eee; padding: 10px 0; }
+        /* High-Contrast Accessible Dark Mode */
+        body { 
+            font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; 
+            background-color: #121212; color: #E0E0E0; 
+        }
+        .controls { 
+            display: flex; flex-direction: column; gap: 10px; border: 2px solid #333; 
+            padding: 15px; border-radius: 8px; background-color: #1e1e1e; 
+        }
+        input { padding: 10px; font-size: 16px; background: #2a2a2a; color: white; border: 1px solid #444; }
+        button { 
+            padding: 15px; background-color: #f39c12; color: #000; border: none; 
+            border-radius: 4px; font-size: 18px; font-weight: bold; cursor: pointer; 
+        }
+        button:disabled { background-color: #555; color: #888; }
+        #status { margin-top: 15px; font-weight: bold; color: #f39c12; min-height: 1.2em; }
+        .flight-item { 
+            border-bottom: 1px solid #333; padding: 15px 0; 
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .flight-info { flex-grow: 1; }
+        .track-btn { padding: 8px 12px; font-size: 14px; margin-left: 10px; }
+        /* Map Container - hidden from screen readers to prevent focus clutter */
+        #map { height: 300px; width: 100%; margin-top: 20px; border-radius: 8px; border: 2px solid #333; }
     </style>
 </head>
 <body>
@@ -24,14 +43,30 @@
         <label for="lon">Longitude</label>
         <input type="number" id="lon" value="-117.3659" step="0.0001">
 
-        <button id="scan-btn" onclick="scanForFlights()">Scan for Aircraft</button>
+        <button id="scan-btn" onclick="scanForFlights()">Scan Riverside Airspace</button>
         <div id="status" aria-live="polite">Ready to scan.</div>
     </div>
+
+    <div id="map" aria-hidden="true"></div>
 
     <div id="flight-list" aria-live="polite">
         </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+    let map, markerLayer;
+    const userLat = 33.9854;
+    const userLon = -117.3659;
+
+    // Initialize Map
+    function initMap() {
+        map = L.map('map').setView([userLat, userLon], 11);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        markerLayer = L.layerGroup().addTo(map);
+        L.marker([userLat, userLon]).addTo(map).bindPopup("Your Location");
+    }
+    initMap();
+
     function calculateDistance(lat1, lon1, lat2, lon2) {
         const R = 3958.8;
         const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -42,24 +77,53 @@
         return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     }
 
-    function updateFlightList(flights, userLat, userLon) {
+    async function getStreetName(lat, lon) {
+        try {
+            const res = await fetch(`/api/locate?lat=${lat}&lon=${lon}`);
+            const data = await res.json();
+            return data.location || "Unknown area";
+        } catch {
+            return "Unknown area";
+        }
+    }
+
+    async function updateFlightList(flights, uLat, uLon) {
         const list = document.getElementById('flight-list');
         list.innerHTML = '';
-        if (flights.length === 0) return;
+        markerLayer.clearLayers();
 
-        // Calculate distances here on the client side
+        if (flights.length === 0) return 0;
+
         const processed = flights.map(f => ({
             ...f,
-            distance: calculateDistance(userLat, userLon, f.lat, f.lon).toFixed(1)
-        })).sort((a, b) => a.distance - b.distance).slice(0, 10);
+            distance: calculateDistance(uLat, uLon, f.lat, f.lon).toFixed(1)
+        })).sort((a, b) => a.distance - b.distance).slice(0, 5); // Limit to 5 for speed
 
-        processed.forEach(f => {
+        for (const f of processed) {
+            const street = await getStreetName(f.lat, f.lon);
+            
+            // Add to Map
+            L.marker([f.lat, f.lon]).addTo(markerLayer).bindPopup(`${f.callsign}`);
+
+            // Add to List
             const item = document.createElement('div');
             item.className = 'flight-item';
-            item.innerHTML = `<h3>${f.callsign}</h3><p>${f.distance} miles away, ${f.altitude} feet altitude.</p>`;
+            item.innerHTML = `
+                <div class="flight-info">
+                    <h3>${f.callsign}</h3>
+                    <p>${f.distance} miles away, over ${street}. Altitude: ${f.altitude} ft.</p>
+                </div>
+                <button class="track-btn" onclick="trackFlight('${f.callsign}', ${f.lat}, ${f.lon})">Track</button>
+            `;
             list.appendChild(item);
-        });
+        }
         return processed.length;
+    }
+
+    function trackFlight(callsign, lat, lon) {
+        const status = document.getElementById('status');
+        status.innerText = `Now tracking ${callsign}. Use VoiceOver/JAWS to monitor updates.`;
+        map.setView([lat, lon], 13);
     }
 
     async function scanForFlights() {
@@ -68,7 +132,7 @@
         const lat = parseFloat(document.getElementById('lat').value);
         const lon = parseFloat(document.getElementById('lon').value);
 
-        status.innerText = "Scanning Riverside airspace via Vercel...";
+        status.innerText = "Scanning Riverside airspace...";
         btn.disabled = true;
 
         try {
@@ -76,10 +140,10 @@
             if (!response.ok) throw new Error("Server error");
             const data = await response.json();
 
-            const count = updateFlightList(data, lat, lon);
-            status.innerText = count > 0 ? `Found ${count} aircraft.` : "No aircraft found in the 25-mile area.";
+            const count = await updateFlightList(data, lat, lon);
+            status.innerText = count > 0 ? `Found ${count} aircraft nearby.` : "No aircraft found.";
         } catch (err) {
-            status.innerText = "Connection error. Please try again.";
+            status.innerText = "Connection error. Ensure Vercel is online.";
         } finally {
             btn.disabled = false;
         }
