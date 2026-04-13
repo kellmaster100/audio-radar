@@ -103,44 +103,53 @@
         document.getElementById('status').innerText = "Stopped tracking.";
     }
 
-    async function trackFlight(icao24, callsign) {
-        const status = document.getElementById('status');
-        const stopBtn = document.getElementById('stop-btn');
-        
-        stopTracking(); // Clear any existing tracking first
-        
-        trackedIcao = icao24;
-        stopBtn.style.display = 'block';
-        status.innerText = `Now tracking ${callsign}. Updates every 10 seconds.`;
-
-        trackingInterval = setInterval(async () => {
-            const uLat = parseFloat(document.getElementById('lat').value);
-            const uLon = parseFloat(document.getElementById('lon').value);
-            
-            try {
-                const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
-                const data = await response.json();
-                
-                const target = data.find(f => f.icao24 === trackedIcao);
-                
-                if (target) {
-                    const street = await getStreetName(target.lat, target.lon);
-                    const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
-                    
-                    status.innerText = `${callsign} update: ${dist} miles away, over ${street}. Altitude: ${target.altitude} ft.`;
-                    
-                    markerLayer.clearLayers();
-                    L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(callsign).openPopup();
-                    map.setView([target.lat, target.lon], 13);
-                } else {
-                    status.innerText = `${callsign} is no longer in range.`;
-                    stopTracking();
-                }
-            } catch (err) {
-                console.error("Tracking failed", err);
-            }
-        }, 10000);
+async function trackFlight(icao24, callsign) {
+    const status = document.getElementById('status');
+    const stopBtn = document.getElementById('stop-btn');
+    
+    // Safety check: ensure we aren't clearing our own new interval
+    if (trackingInterval) {
+        clearInterval(trackingInterval);
+        trackingInterval = null;
     }
+    
+    trackedIcao = icao24;
+    stopBtn.style.display = 'block';
+    status.innerText = `Connecting to ${callsign}...`;
+
+    // Run the first update immediately so the user doesn't wait 10s
+    const firstUpdate = async () => {
+        const uLat = parseFloat(document.getElementById('lat').value);
+        const uLon = parseFloat(document.getElementById('lon').value);
+        
+        try {
+            const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
+            const data = await response.json();
+            
+            // ADSB.lol uses 'icao24' or 'hex'. Let's check both.
+            const target = data.find(f => (f.icao24 === trackedIcao || f.hex === trackedIcao));
+            
+            if (target) {
+                const street = await getStreetName(target.lat, target.lon);
+                const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
+                status.innerText = `Tracking ${callsign}: ${dist} mi, over ${street}. Alt: ${target.altitude}ft.`;
+                
+                markerLayer.clearLayers();
+                L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(callsign).openPopup();
+                map.setView([target.lat, target.lon], 13);
+            } else {
+                status.innerText = `Lost signal for ${callsign}. Aircraft may have left range.`;
+                stopTracking();
+            }
+        } catch (err) {
+            status.innerText = "Tracking update failed. Reconnecting...";
+        }
+    };
+
+    // Run now, then every 10 seconds
+    await firstUpdate();
+    trackingInterval = setInterval(firstUpdate, 10000);
+}
 
     async function scanForFlights() {
         stopTracking();
