@@ -32,7 +32,7 @@
         }
         .track-btn { padding: 10px 15px; font-size: 16px; background-color: #3498db; color: white; border-radius: 4px; border: none; }
         
-        #map { height: 300px; width: 100%; margin-top: 20px; border-radius: 8px; border: 2px solid #333; }
+        #map { height: 350px; width: 100%; margin-top: 20px; border-radius: 8px; border: 2px solid #333; }
     </style>
 </head>
 <body>
@@ -68,19 +68,34 @@
         const startLat = parseFloat(document.getElementById('lat').value);
         const startLon = parseFloat(document.getElementById('lon').value);
         if (map) map.remove();
+        
         map = L.map('map').setView([startLat, startLon], 11);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        
+        // Using CartoDB Dark Matter tiles for high contrast
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO'
+        }).addTo(map);
+        
         markerLayer = L.layerGroup().addTo(map);
         updateUserMarker(startLat, startLon);
     }
 
+    // UPDATED: Modern visual marker for the User's location
     function updateUserMarker(lat, lon) {
         if (userMarker) map.removeLayer(userMarker);
-        userMarker = L.marker([lat, lon]).addTo(map).bindPopup("Your Location");
-        map.setView([lat, lon], 11);
+        
+        userMarker = L.circleMarker([lat, lon], {
+            radius: 10,
+            fillColor: "#3498db",
+            color: "#fff",
+            weight: 3,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map).bindPopup("Your Location");
+        
+        map.setView([lat, lon], 12);
     }
 
-    // NEW: Get User Geolocation
     function getLocation() {
         const status = document.getElementById('status');
         if (!navigator.geolocation) {
@@ -88,7 +103,7 @@
             return;
         }
 
-        status.innerText = "Acquiring location... please check for browser permissions.";
+        status.innerText = "Acquiring location... check browser permissions.";
         
         navigator.geolocation.getCurrentPosition(
             (position) => {
@@ -98,7 +113,6 @@
                 document.getElementById('lon').value = lon;
                 status.innerText = `Location found: ${lat}, ${lon}.`;
                 updateUserMarker(lat, lon);
-                // Automatically scan once location is set
                 scanForFlights();
             },
             (error) => {
@@ -161,8 +175,18 @@
                     const street = await getStreetName(target.lat, target.lon);
                     const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
                     status.innerText = `${trackedCallsign}: ${dist} mi, over ${street}. Alt: ${target.altitude}ft.`;
+                    
                     markerLayer.clearLayers();
-                    L.marker([target.lat, target.lon]).addTo(markerLayer).bindPopup(trackedCallsign).openPopup();
+                    // Aircraft Marker: High visibility yellow for dark mode
+                    L.circleMarker([target.lat, target.lon], {
+                        radius: 8,
+                        fillColor: "#f39c12",
+                        color: "#000",
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    }).addTo(markerLayer).bindPopup(trackedCallsign).openPopup();
+                    
                     map.setView([target.lat, target.lon], 13);
                 } else {
                     status.innerText = `Searching for ${trackedCallsign} signal...`;
@@ -194,8 +218,20 @@
                     distance: calculateDistance(lat, lon, f.lat, f.lon).toFixed(1)
                 })).sort((a, b) => a.distance - b.distance).slice(0, 5);
 
+                markerLayer.clearLayers(); // Clear old scan markers
                 for (const f of processed) {
                     const street = await getStreetName(f.lat, f.lon);
+                    
+                    // Add aircraft to map
+                    L.circleMarker([f.lat, f.lon], {
+                        radius: 6,
+                        fillColor: "#f39c12",
+                        color: "#fff",
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    }).addTo(markerLayer).bindPopup(f.callsign);
+
                     const item = document.createElement('div');
                     item.className = 'flight-item';
                     item.innerHTML = `
