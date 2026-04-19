@@ -166,9 +166,10 @@
             } catch (err) { status.innerText = "Connection error."; }
         };
         await runUpdate();
-        trackingInterval = setInterval(runUpdate, 10000);
+        // Change the 10000 to 15000 at the bottom of trackFlight
+        await runUpdate();
+        trackingInterval = setInterval(runUpdate, 15000); 
     }
-
     async function scanForFlights() {
         const status = document.getElementById('status');
         const btn = document.getElementById('scan-btn');
