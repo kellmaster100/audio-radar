@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Radar v2 - Live Tracking</title>
+    <title>Audio Radar v3 - Live Tracking</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { 
@@ -20,16 +20,22 @@
             flex: 1; padding: 15px; background-color: #f39c12; color: #000; border: none; 
             border-radius: 4px; font-size: 18px; font-weight: bold; cursor: pointer; 
         }
+        button:hover { background-color: #e67e22; }
         button:disabled { background-color: #555; color: #888; }
         .loc-btn { background-color: #3498db; color: white; }
         .stop-btn { background-color: #e74c3c; color: white; margin-top: 10px; display: none; }
         
-        #status { margin-top: 15px; font-weight: bold; color: #f39c12; min-height: 1.2em; }
+        #status { 
+            margin-top: 15px; font-weight: bold; color: #f39c12; min-height: 1.5em;
+            padding: 10px; border-left: 4px solid #f39c12; background: #252525;
+        }
         
         .flight-item { 
             border-bottom: 1px solid #333; padding: 15px 0; 
             display: flex; justify-content: space-between; align-items: center;
         }
+        .flight-info h3 { margin: 0; color: #3498db; }
+        .flight-info p { margin: 5px 0 0 0; font-size: 0.9em; color: #bbb; }
         .track-btn { padding: 10px 15px; font-size: 16px; background-color: #3498db; color: white; border-radius: 4px; border: none; }
         
         #map { height: 350px; width: 100%; margin-top: 20px; border-radius: 8px; border: 2px solid #333; }
@@ -37,7 +43,7 @@
 </head>
 <body>
 
-    <h1>Audio Radar</h1>
+    <h1>Audio Radar v3</h1>
 
     <div class="controls">
         <label for="lat">Latitude</label>
@@ -51,7 +57,7 @@
             <button id="scan-btn" onclick="scanForFlights()">Scan Airspace</button>
         </div>
         <button id="stop-btn" class="stop-btn" onclick="stopTracking()">Stop Tracking</button>
-        <div id="status" aria-live="polite">Ready to scan.</div>
+        <div id="status" aria-live="aggressive">Ready to scan.</div>
     </div>
 
     <div id="map" aria-hidden="true"></div>
@@ -62,70 +68,45 @@
     let map, markerLayer, userMarker;
     let trackingInterval = null;
     let trackedIcao = null;
-    let trackedCallsign = null;
 
     function initMap() {
         const startLat = parseFloat(document.getElementById('lat').value);
         const startLon = parseFloat(document.getElementById('lon').value);
         if (map) map.remove();
-        
         map = L.map('map').setView([startLat, startLon], 11);
-        
-        // Using CartoDB Dark Matter tiles for high contrast
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap &copy; CARTO'
+            attribution: '&copy; OpenStreetMap'
         }).addTo(map);
-        
         markerLayer = L.layerGroup().addTo(map);
         updateUserMarker(startLat, startLon);
     }
 
-    // UPDATED: Modern visual marker for the User's location
     function updateUserMarker(lat, lon) {
         if (userMarker) map.removeLayer(userMarker);
-        
         userMarker = L.circleMarker([lat, lon], {
-            radius: 10,
-            fillColor: "#3498db",
-            color: "#fff",
-            weight: 3,
-            opacity: 1,
-            fillOpacity: 0.8
-        }).addTo(map).bindPopup("Your Location");
-        
+            radius: 10, fillColor: "#3498db", color: "#fff", weight: 3, opacity: 1, fillOpacity: 0.8
+        }).addTo(map);
         map.setView([lat, lon], 12);
     }
 
     function getLocation() {
-        const status = document.getElementById('status');
         if (!navigator.geolocation) {
-            status.innerText = "Geolocation is not supported by your browser.";
+            document.getElementById('status').innerText = "Geolocation not supported.";
             return;
         }
-
-        status.innerText = "Acquiring location... check browser permissions.";
-        
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const lat = position.coords.latitude.toFixed(4);
-                const lon = position.coords.longitude.toFixed(4);
-                document.getElementById('lat').value = lat;
-                document.getElementById('lon').value = lon;
-                status.innerText = `Location found: ${lat}, ${lon}.`;
-                updateUserMarker(lat, lon);
-                scanForFlights();
-            },
-            (error) => {
-                status.innerText = "Unable to retrieve location. Please enter coordinates manually.";
-                console.error(error);
-            }
-        );
+        document.getElementById('status').innerText = "Acquiring location...";
+        navigator.geolocation.getCurrentPosition((pos) => {
+            const lat = pos.coords.latitude.toFixed(4);
+            const lon = pos.coords.longitude.toFixed(4);
+            document.getElementById('lat').value = lat;
+            document.getElementById('lon').value = lon;
+            updateUserMarker(lat, lon);
+            scanForFlights();
+        });
     }
 
-    initMap();
-
     function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 3958.8;
+        const R = 3958.8; // Miles
         const dLat = (lat2 - lat1) * Math.PI / 180;
         const dLon = (lon2 - lon1) * Math.PI / 180;
         const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -139,24 +120,20 @@
             const res = await fetch(`/api/locate?lat=${lat}&lon=${lon}`);
             const data = await res.json();
             return data.location || "Unknown area";
-        } catch {
-            return "Unknown area";
-        }
+        } catch { return "Unknown area"; }
     }
 
     function stopTracking() {
         if (trackingInterval) clearInterval(trackingInterval);
         trackingInterval = null;
         trackedIcao = null;
-        trackedCallsign = null;
         document.getElementById('stop-btn').style.display = 'none';
         document.getElementById('status').innerText = "Tracking stopped.";
     }
 
-    async function trackFlight(icao24, callsign) {
+    async function trackFlight(icao24) {
         if (trackingInterval) clearInterval(trackingInterval);
         trackedIcao = icao24.toLowerCase().trim();
-        trackedCallsign = callsign.trim();
         document.getElementById('stop-btn').style.display = 'block';
         const status = document.getElementById('status');
         
@@ -166,32 +143,27 @@
             try {
                 const response = await fetch(`/api/flights?lat=${uLat}&lon=${uLon}`);
                 const data = await response.json();
-                const target = data.find(f => {
-                    const fIcao = (f.icao24 || f.hex || "").toLowerCase().trim();
-                    const fCall = (f.callsign || "").trim();
-                    return fIcao === trackedIcao || fCall === trackedCallsign;
-                });
-                if (target) {
-                    const street = await getStreetName(target.lat, target.lon);
-                    const dist = calculateDistance(uLat, uLon, target.lat, target.lon).toFixed(1);
-                    status.innerText = `${trackedCallsign}: ${dist} mi, over ${street}. Alt: ${target.altitude}ft.`;
+                const f = data.find(f => (f.icao24 || "").toLowerCase() === trackedIcao);
+                
+                if (f) {
+                    const street = await getStreetName(f.lat, f.lon);
+                    const dist = calculateDistance(uLat, uLon, f.lat, f.lon).toFixed(1);
+                    const vStatus = f.vRate > 500 ? "climbing" : f.vRate < -500 ? "descending" : "level";
+                    const routeInfo = f.route ? ` from ${f.route}` : "";
+                    
+                    // High-detail announcement for screen readers
+                    status.innerText = `${f.callsign}, a ${f.type}, is ${dist} miles away over ${street}${routeInfo}. 
+                                        Currently at ${f.altitude} feet, ${vStatus} at ${f.gs} knots.`;
                     
                     markerLayer.clearLayers();
-                    // Aircraft Marker: High visibility yellow for dark mode
-                    L.circleMarker([target.lat, target.lon], {
-                        radius: 8,
-                        fillColor: "#f39c12",
-                        color: "#000",
-                        weight: 1,
-                        opacity: 1,
-                        fillOpacity: 0.9
-                    }).addTo(markerLayer).bindPopup(trackedCallsign).openPopup();
-                    
-                    map.setView([target.lat, target.lon], 13);
+                    L.circleMarker([f.lat, f.lon], {
+                        radius: 8, fillColor: "#f39c12", color: "#000", weight: 1, opacity: 1, fillOpacity: 0.9
+                    }).addTo(markerLayer).bindPopup(`${f.callsign} (${f.registration})`).openPopup();
+                    map.setView([f.lat, f.lon], 13);
                 } else {
-                    status.innerText = `Searching for ${trackedCallsign} signal...`;
+                    status.innerText = "Signal lost. Still searching...";
                 }
-            } catch (err) { status.innerText = "Connection lost. Retrying..."; }
+            } catch (err) { status.innerText = "Connection error."; }
         };
         await runUpdate();
         trackingInterval = setInterval(runUpdate, 10000);
@@ -203,6 +175,7 @@
         const list = document.getElementById('flight-list');
         const lat = parseFloat(document.getElementById('lat').value);
         const lon = parseFloat(document.getElementById('lon').value);
+        
         status.innerText = "Scanning nearby airspace...";
         btn.disabled = true;
         list.innerHTML = '';
@@ -218,36 +191,26 @@
                     distance: calculateDistance(lat, lon, f.lat, f.lon).toFixed(1)
                 })).sort((a, b) => a.distance - b.distance).slice(0, 5);
 
-                markerLayer.clearLayers(); // Clear old scan markers
+                markerLayer.clearLayers();
                 for (const f of processed) {
                     const street = await getStreetName(f.lat, f.lon);
-                    
-                    // Add aircraft to map
-                    L.circleMarker([f.lat, f.lon], {
-                        radius: 6,
-                        fillColor: "#f39c12",
-                        color: "#fff",
-                        weight: 1,
-                        opacity: 1,
-                        fillOpacity: 0.8
-                    }).addTo(markerLayer).bindPopup(f.callsign);
-
                     const item = document.createElement('div');
                     item.className = 'flight-item';
                     item.innerHTML = `
                         <div class="flight-info">
-                            <h3>${f.callsign}</h3>
-                            <p>${f.distance} miles away, over ${street}.</p>
+                            <h3>${f.callsign} (${f.type})</h3>
+                            <p>${f.distance} mi away over ${street}. Reg: ${f.registration}.</p>
                         </div>
-                        <button class="track-btn" aria-label="Track ${f.callsign}" onclick="trackFlight('${f.icao24}', '${f.callsign}')">Track</button>
+                        <button class="track-btn" aria-label="Track ${f.callsign} ${f.type}" onclick="trackFlight('${f.icao24}')">Track</button>
                     `;
                     list.appendChild(item);
                 }
-                status.innerText = `Found ${processed.length} aircraft nearby.`;
+                status.innerText = `Found ${processed.length} aircraft. Nearest is ${processed[0].callsign}.`;
             }
-        } catch (err) { status.innerText = "Error fetching flight data."; }
+        } catch (err) { status.innerText = "Scan failed."; }
         finally { btn.disabled = false; }
     }
+    initMap();
 </script>
 </body>
 </html>
