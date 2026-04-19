@@ -57,7 +57,7 @@
             <button id="scan-btn" onclick="scanForFlights()">Scan Airspace</button>
         </div>
         <button id="stop-btn" class="stop-btn" onclick="stopTracking()">Stop Tracking</button>
-        <div id="status" aria-live="assertive">Ready to scan.</div>
+        <div id="status" aria-live="polite">Ready to scan.</div>
     </div>
 
     <div id="map" aria-hidden="true"></div>
@@ -148,12 +148,12 @@
                 if (f) {
                     const street = await getStreetName(f.lat, f.lon);
                     const dist = calculateDistance(uLat, uLon, f.lat, f.lon).toFixed(1);
-                    const vStatus = f.vRate > 500 ? "climbing" : f.vRate < -500 ? "descending" : "level";
+                    const vStatus = f.vRate > 500 ? "climbing" : f.vRate < -500 ? "descending" : "at a level altitude";
                     const routeInfo = f.route ? ` from ${f.route}` : "";
                     
-                    // High-detail announcement for screen readers
+                    // Comprehensive announcement optimized for 15-second pacing
                     status.innerText = `${f.callsign}, a ${f.type}, is ${dist} miles away over ${street}${routeInfo}. 
-                                        Currently at ${f.altitude} feet, ${vStatus} at ${f.gs} knots.`;
+                                        Currently at ${f.altitude} feet, ${vStatus}, traveling at ${f.gs} knots.`;
                     
                     markerLayer.clearLayers();
                     L.circleMarker([f.lat, f.lon], {
@@ -161,15 +161,16 @@
                     }).addTo(markerLayer).bindPopup(`${f.callsign} (${f.registration})`).openPopup();
                     map.setView([f.lat, f.lon], 13);
                 } else {
-                    status.innerText = "Signal lost. Still searching...";
+                    status.innerText = "Searching for signal... next update in 15 seconds.";
                 }
-            } catch (err) { status.innerText = "Connection error."; }
+            } catch (err) { status.innerText = "Connection error. Retrying soon."; }
         };
+
         await runUpdate();
-        // Change the 10000 to 15000 at the bottom of trackFlight
-        await runUpdate();
+        // Updated to 15 seconds to accommodate slower speech rates
         trackingInterval = setInterval(runUpdate, 15000); 
     }
+
     async function scanForFlights() {
         const status = document.getElementById('status');
         const btn = document.getElementById('scan-btn');
@@ -185,7 +186,7 @@
             const response = await fetch(`/api/flights?lat=${lat}&lon=${lon}`);
             const data = await response.json();
             if (!data || data.length === 0) {
-                status.innerText = "No aircraft found.";
+                status.innerText = "No aircraft found nearby.";
             } else {
                 const processed = data.map(f => ({
                     ...f,
@@ -200,15 +201,15 @@
                     item.innerHTML = `
                         <div class="flight-info">
                             <h3>${f.callsign} (${f.type})</h3>
-                            <p>${f.distance} mi away over ${street}. Reg: ${f.registration}.</p>
+                            <p>${f.distance} miles away over ${street}. Registration ${f.registration}.</p>
                         </div>
-                        <button class="track-btn" aria-label="Track ${f.callsign} ${f.type}" onclick="trackFlight('${f.icao24}')">Track</button>
+                        <button class="track-btn" aria-label="Track ${f.callsign}, ${f.type}" onclick="trackFlight('${f.icao24}')">Track</button>
                     `;
                     list.appendChild(item);
                 }
-                status.innerText = `Found ${processed.length} aircraft. Nearest is ${processed[0].callsign}.`;
+                status.innerText = `Found ${processed.length} aircraft. The closest is ${processed[0].callsign}.`;
             }
-        } catch (err) { status.innerText = "Scan failed."; }
+        } catch (err) { status.innerText = "The airspace scan failed. Please try again."; }
         finally { btn.disabled = false; }
     }
     initMap();
