@@ -70,6 +70,27 @@
     let trackedIcao = null;
     let lastCity = null;
 
+    // --- MEMORY FUNCTIONS ---
+    function saveHomeLocation(lat, lon, city) {
+        localStorage.setItem('audioRadarLat', lat);
+        localStorage.setItem('audioRadarLon', lon);
+        localStorage.setItem('audioRadarCity', city);
+    }
+
+    function loadHomeLocation() {
+        const savedLat = localStorage.getItem('audioRadarLat');
+        const savedLon = localStorage.getItem('audioRadarLon');
+        const savedCity = localStorage.getItem('audioRadarCity');
+
+        if (savedLat && savedLon) {
+            document.getElementById('lat').value = savedLat;
+            document.getElementById('lon').value = savedLon;
+            document.getElementById('status').innerText = `Welcome back. Last known location: ${savedCity || "Unknown Area"}.`;
+            updateUserMarker(parseFloat(savedLat), parseFloat(savedLon));
+        }
+    }
+
+    // --- CORE LOGIC ---
     function initMap() {
         const startLat = parseFloat(document.getElementById('lat').value);
         const startLon = parseFloat(document.getElementById('lon').value);
@@ -80,6 +101,9 @@
         }).addTo(map);
         markerLayer = L.layerGroup().addTo(map);
         updateUserMarker(startLat, startLon);
+        
+        // Check for saved location on startup
+        loadHomeLocation();
     }
 
     function updateUserMarker(lat, lon) {
@@ -96,11 +120,17 @@
             return;
         }
         document.getElementById('status').innerText = "Acquiring location...";
-        navigator.geolocation.getCurrentPosition((pos) => {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
             const lat = pos.coords.latitude.toFixed(4);
             const lon = pos.coords.longitude.toFixed(4);
             document.getElementById('lat').value = lat;
             document.getElementById('lon').value = lon;
+            
+            // Get city for the "Home" memory
+            const loc = await getFullLocation(lat, lon);
+            saveHomeLocation(lat, lon, loc.city);
+            
+            document.getElementById('status').innerText = `Location updated to ${loc.city || "current area"}.`;
             updateUserMarker(lat, lon);
             scanForFlights();
         });
