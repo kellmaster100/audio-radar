@@ -151,7 +151,7 @@
                     const vStatus = f.vRate > 500 ? "climbing" : f.vRate < -500 ? "descending" : "at a level altitude";
                     const routeInfo = f.route ? ` from ${f.route}` : "";
                     
-                    // Comprehensive announcement optimized for 15-second pacing
+                    // Comprehensive announcement optimized for 12-second pacing
                     status.innerText = `${f.callsign}, a ${f.type}, is ${dist} miles away over ${street}${routeInfo}. 
                                         Currently at ${f.altitude} feet, ${vStatus}, traveling at ${f.gs} knots.`;
                     
@@ -161,7 +161,7 @@
                     }).addTo(markerLayer).bindPopup(`${f.callsign} (${f.registration})`).openPopup();
                     map.setView([f.lat, f.lon], 13);
                 } else {
-                    status.innerText = "Searching for signal... next update in 15 seconds.";
+                    status.innerText = "Searching for signal... next update in 12 seconds.";
                 }
             } catch (err) { status.innerText = "Connection error. Retrying soon."; }
         };
