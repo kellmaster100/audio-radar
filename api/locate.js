@@ -23,10 +23,14 @@ export default async function handler(req, res) {
         const data = await response.json();
         const addr = data.address || {};
         
-        // Priority list for a natural "Over [Place]" announcement
-        const displayLocation = addr.road || addr.neighbourhood || addr.suburb || addr.city || addr.county || "Unknown Area";
+        // Extract specific components
+        const street = addr.road || addr.neighbourhood || addr.suburb || "Unknown Street";
+        const city = addr.city || addr.town || addr.village || addr.county || "";
 
-        res.status(200).json({ location: displayLocation });
+        res.status(200).json({ 
+            street: street,
+            city: city
+        });
     } catch (err) {
         res.status(500).json({ error: "Locate failed", message: err.message });
     }

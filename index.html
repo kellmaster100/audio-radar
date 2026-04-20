@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Radar v3 - Live Flight Tracking</title>
+    <title>Audio Radar v3 - Live Aircraft Tracking</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { 
@@ -43,7 +43,7 @@
 </head>
 <body>
 
-    <h1>Audio Radar v3 Live Flight Tracking</h1>
+    <h1>Audio Radar Live Aircraft Tracking v3</h1>
 
     <div class="controls">
         <label for="lat">Latitude</label>
@@ -68,6 +68,7 @@
     let map, markerLayer, userMarker;
     let trackingInterval = null;
     let trackedIcao = null;
+    let lastCity = null;
 
     function initMap() {
         const startLat = parseFloat(document.getElementById('lat').value);
@@ -106,7 +107,7 @@
     }
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 3958.8; // Miles
+        const R = 3958.8;
         const dLat = (lat2 - lat1) * Math.PI / 180;
         const dLon = (lon2 - lon1) * Math.PI / 180;
         const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -115,18 +116,22 @@
         return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     }
 
-    async function getStreetName(lat, lon) {
+    async function getFullLocation(lat, lon) {
         try {
             const res = await fetch(`/api/locate?lat=${lat}&lon=${lon}`);
             const data = await res.json();
-            return data.location || "Unknown area";
-        } catch { return "Unknown area"; }
+            return {
+                street: data.street || "Unknown street",
+                city: data.city || ""
+            };
+        } catch { return { street: "Unknown street", city: "" }; }
     }
 
     function stopTracking() {
         if (trackingInterval) clearInterval(trackingInterval);
         trackingInterval = null;
         trackedIcao = null;
+        lastCity = null;
         document.getElementById('stop-btn').style.display = 'none';
         document.getElementById('status').innerText = "Tracking stopped.";
     }
@@ -134,6 +139,7 @@
     async function trackFlight(icao24) {
         if (trackingInterval) clearInterval(trackingInterval);
         trackedIcao = icao24.toLowerCase().trim();
+        lastCity = null; 
         document.getElementById('stop-btn').style.display = 'block';
         const status = document.getElementById('status');
         
@@ -146,13 +152,18 @@
                 const f = data.find(f => (f.icao24 || "").toLowerCase() === trackedIcao);
                 
                 if (f) {
-                    const street = await getStreetName(f.lat, f.lon);
+                    const loc = await getFullLocation(f.lat, f.lon);
                     const dist = calculateDistance(uLat, uLon, f.lat, f.lon).toFixed(1);
                     const vStatus = f.vRate > 500 ? "climbing" : f.vRate < -500 ? "descending" : "at a level altitude";
                     const routeInfo = f.route ? ` from ${f.route}` : "";
                     
-                    // Comprehensive announcement optimized for 12-second pacing
-                    status.innerText = `${f.callsign}, a ${f.type}, is ${dist} miles away over ${street}${routeInfo}. 
+                    let cityAnnouncement = "";
+                    if (loc.city && loc.city !== lastCity) {
+                        cityAnnouncement = ` in ${loc.city}. `;
+                        lastCity = loc.city;
+                    }
+                    
+                    status.innerText = `${f.callsign}, a ${f.type}, is ${dist} miles away.${cityAnnouncement} Over ${loc.street}${routeInfo}. 
                                         Currently at ${f.altitude} feet, ${vStatus}, traveling at ${f.gs} knots.`;
                     
                     markerLayer.clearLayers();
@@ -161,14 +172,13 @@
                     }).addTo(markerLayer).bindPopup(`${f.callsign} (${f.registration})`).openPopup();
                     map.setView([f.lat, f.lon], 13);
                 } else {
-                    status.innerText = "Searching for signal... next update in 12 seconds.";
+                    status.innerText = "Searching for signal... next update in 15 seconds.";
                 }
             } catch (err) { status.innerText = "Connection error. Retrying soon."; }
         };
 
         await runUpdate();
-        // Updated to 12 seconds to accommodate slower speech rates
-        trackingInterval = setInterval(runUpdate, 12000); 
+        trackingInterval = setInterval(runUpdate, 15000); 
     }
 
     async function scanForFlights() {
@@ -195,13 +205,13 @@
 
                 markerLayer.clearLayers();
                 for (const f of processed) {
-                    const street = await getStreetName(f.lat, f.lon);
+                    const loc = await getFullLocation(f.lat, f.lon);
                     const item = document.createElement('div');
                     item.className = 'flight-item';
                     item.innerHTML = `
                         <div class="flight-info">
                             <h3>${f.callsign} (${f.type})</h3>
-                            <p>${f.distance} miles away over ${street}. Registration ${f.registration}.</p>
+                            <p>${f.distance} miles away over ${loc.street} in ${loc.city}. Registration ${f.registration}.</p>
                         </div>
                         <button class="track-btn" aria-label="Track ${f.callsign}, ${f.type}" onclick="trackFlight('${f.icao24}')">Track</button>
                     `;
@@ -209,7 +219,7 @@
                 }
                 status.innerText = `Found ${processed.length} aircraft. The closest is ${processed[0].callsign}.`;
             }
-        } catch (err) { status.innerText = "The airspace scan failed. Please try again."; }
+        } catch (err) { status.innerText = "Airspace scan failed. Please try again."; }
         finally { btn.disabled = false; }
     }
     initMap();
